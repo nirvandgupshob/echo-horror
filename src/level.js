@@ -8,6 +8,7 @@ import * as P from './props.js';
 import { woodLeaf, steelLeaf, liftLeaf, doorFrame, ease } from './doors.js';
 import { createFuse, workMaterials } from './work-props.js';
 import { insideLift, takeLiftSurfaces } from './lift-asset.js';
+import { createWaterSurface } from './water.js';
 
 export const W = 64;
 export const H = 56;
@@ -57,7 +58,7 @@ const SURF = {
 };
 
 export class Level {
-  constructor(scene) {
+  constructor(scene, { materials = null } = {}) {
     this.scene = scene;
     this.cells = new Uint8Array(W * H);
     this.ceil = new Float32Array(W * H);
@@ -68,8 +69,9 @@ export class Level {
     this.sparks = [];
     this.triggers = [];
     this.layout();
-    this.materials();
+    this.materials(materials);
     this.buildArchitecture();
+    this.buildWater();
     this.buildProps();
     this.buildDynamic();
     this.buildDecals();
@@ -182,7 +184,7 @@ export class Level {
       f_tile4: echoMaterial({ map: 'tile4', scale: 0.5, bump: 1.1, boost: 0.6 }),
       f_boards: echoMaterial({ map: 'boards', scale: 0.45, bump: 1.2, boost: 0.85 }),
       f_parquet: echoMaterial({ map: 'parquet', scale: 0.5, boost: 0.85 }),
-      f_water2: echoMaterial({ map: 'parquet', scale: 0.5, pat: 1, wet: 1 }),
+      f_water2: echoMaterial({ map: 'parquet', scale: 0.5, wet: .4 }),
       f_conc3: echoMaterial({ map: 'conc3', scale: 0.4, bump: 1.2 }),
       f_rug: echoMaterial({ map: 'rug', scale: 0.6, boost: 0.8 }),
       w_hosp2: echoMaterial({ pat: 7, map: 'plaster4', scale: 0.45, map2: 'paint', scale2: 0.5, split: 1.5, grime: 0.8 }),
@@ -200,7 +202,7 @@ export class Level {
       corrM: echoMaterial({ map: 'corr', scale: 0.7 }),
       f_terrazzo: echoMaterial({ map: 'terrazzo', scale: 0.35, boost: 0.7 }),
       f_carpet: echoMaterial({ map: 'carpet', scale: 0.7, boost: 0.85 }),
-      f_water: echoMaterial({ map: 'tile', scale: 0.5, pat: 1, wet: 1 }),
+      f_water: echoMaterial({ map: 'tile', scale: 0.5, wet: .4 }),
       f_glass: echoMaterial({ map: 'cfloor', scale: 0.4, pat: 3, boost: 0.8 }),
       f_cfloor: echoMaterial({ map: 'cfloor', scale: 0.4, bump: 1.2 }),
       f_grate: echoMaterial({ map: 'grate', scale: 0.6, bump: 1.4 }),
@@ -227,7 +229,7 @@ export class Level {
       void: new THREE.MeshBasicMaterial({ color: 0x000000 }),
       ceil: echoMaterial({ map: 'ceil', scale: 0.4, boost: 0.8 }),
       [FLOOR.TILE]: echoMaterial({ map: 'tile', scale: 0.5, bump: 1.1, boost: 0.6 }),
-      [FLOOR.WATER]: echoMaterial({ map: 'tile', scale: 0.5, pat: 1, wet: 1 }),
+      [FLOOR.WATER]: echoMaterial({ map: 'tile', scale: 0.5, wet: .4 }),
       [FLOOR.GLASS]: echoMaterial({ map: 'tile', scale: 0.5, pat: 3, boost: 0.6 }),
       [FLOOR.METAL]: echoMaterial({ map: 'grate', scale: 0.6, bump: 1.4 }),
       [FLOOR.CARPET]: echoMaterial({ map: 'carpet', scale: 0.7, boost: 0.85 }),
@@ -246,7 +248,8 @@ export class Level {
   }
 
   // ---------------------------------------------------------- architecture
-  buildArchitecture() {
+  buildArchitecture({include=()=>true}={}) {
+    const visible=(i,j)=>this.open(i,j)&&include(i,j);
     this.wallRuns = [];
     const groups = {}; // key -> {pos:[], nor:[]}
     const liftGroups={};
@@ -292,7 +295,7 @@ export class Level {
           run = null;
         };
         for (let i = 0; i <= W; i++) {
-          const f = i < W && this.open(i, j) ? face(i, j, i, j + dz) : null;
+          const f = i < W && visible(i, j) ? face(i, j, i, j + dz) : null;
           const k = f ? this.surf(i, j).wall : null;
           if (f && run && run.y0 === f[0] && run.y1 === f[1] && run.k === k) run.x1 = i + 1;
           else {
@@ -317,7 +320,7 @@ export class Level {
           run = null;
         };
         for (let j = 0; j <= H; j++) {
-          const f = j < H && this.open(i, j) ? face(i, j, i + dx, j) : null;
+          const f = j < H && visible(i, j) ? face(i, j, i + dx, j) : null;
           const k = f ? this.surf(i, j).wall : null;
           if (f && run && run.y0 === f[0] && run.y1 === f[1] && run.k === k) run.z1 = j + 1;
           else {
@@ -342,7 +345,7 @@ export class Level {
         cr = null;
       };
       for (let i = 0; i <= W; i++) {
-        const o = i < W && this.open(i, j);
+        const o = i < W && visible(i, j);
         const t = o ? this.floorKey(i, j) : 0;
         const h = o ? this.ceil[j * W + i] : 0;
         const ck = o ? this.surf(i, j).ceil : 0;
@@ -369,6 +372,11 @@ export class Level {
     arch.add(echoPoints(lg, { boost: 1.0 }));
     this.scene.add(arch);
     this.scene.add(this.liftRoot);
+  }
+
+  buildWater() {
+    this.water=createWaterSurface(this.cells,W,H);
+    this.scene.add(this.water);
   }
 
   // ----------------------------------------------------------------- props
@@ -965,6 +973,11 @@ export class Level {
     this.scene.add(group);
   }
 
+  addHidingPlace(data){
+    const item={type:'locker',obj:new THREE.Object3D(),taken:false,...data};
+    this.items.push(item);return item;
+  }
+
   // ------------------------------------------------------- items & doors
   buildDynamic() {
     const mat = this.mat.item, lm = this.lineMat.item;
@@ -1058,7 +1071,7 @@ export class Level {
         const lx = (i - (n - 1) / 2) * 0.5;
         const c = Math.cos(ry), sn = Math.sin(ry);
         const W2 = (u, v) => new THREE.Vector3(x + u * c + v * sn, 0, z - u * sn + v * c);
-        this.items.push({ type: 'locker', pos: W2(lx, 0.45).setY(1.1), inside: W2(lx, 0.02), front: W2(lx, 0.8), yaw: ry + Math.PI, obj: new THREE.Object3D(), taken: false });
+        this.addHidingPlace({pos:W2(lx,.45).setY(1.1),inside:W2(lx,.02),front:W2(lx,.8),yaw:ry+Math.PI});
       }
     this.items.push({ type: 'shutterA', pos: new THREE.Vector3(12.9, 1.3, 6.4), obj: new THREE.Object3D(), taken: false });
     this.items.push({ type: 'shutterB', pos: new THREE.Vector3(6.5, 1.25, 12.9), obj: new THREE.Object3D(), taken: false });
@@ -1264,8 +1277,8 @@ export class Level {
         for (let i = 0; i < NW; i++) {
           const x = (i + 0.5) * S, z = (j + 0.5) * S;
           const ci = Math.floor(z) * W + Math.floor(x);
-          const crawlOk = this.ceil[ci] >= 1.7 || this.shaftCell(Math.floor(x), Math.floor(z));
-          g[j * NW + i] = this.open(Math.floor(x), Math.floor(z)) && crawlOk && !this.blockedPoint(x, z, 0.3) ? 1 : 0;
+          const crawlOk = (this.navigationHeadroom?.(x,z)??this.ceil[ci]) >= 1.7 || this.shaftCell(Math.floor(x), Math.floor(z));
+          g[j * NW + i] = (this.navigationOpen?.(x,z)??this.open(Math.floor(x), Math.floor(z))) && crawlOk && !this.blockedPoint(x, z, 0.3) ? 1 : 0;
         }
       return g;
     };
@@ -1488,7 +1501,7 @@ export class Level {
     for (let s = 1; s < n; s++) {
       const t = s / n;
       const x = a.x + (b.x - a.x) * t, z = a.z + (b.z - a.z) * t;
-      const solid = !this.open(Math.floor(x), Math.floor(z));
+      const solid = !(this.acousticOpen?.(x,z)??this.open(Math.floor(x), Math.floor(z)));
       if (solid && !lastSolid) hits++;
       lastSolid = solid;
     }

@@ -7,7 +7,7 @@ import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { SMAAPass } from 'three/examples/jsm/postprocessing/SMAAPass.js';
 import { AfterimagePass } from 'three/examples/jsm/postprocessing/AfterimagePass.js';
 import { GTAOPass } from 'three/examples/jsm/postprocessing/GTAOPass.js';
-import { echo, COLORS, createDust, setRelief, setListen, pomScale } from './echo.js';
+import { lampLight, echo, COLORS, createDust, setRelief, setListen, pomScale } from './echo.js';
 import { AudioEngine } from './audio.js';
 import { Level } from './level.js';
 import { Player } from './player.js';
@@ -25,6 +25,12 @@ import { createTouchControls } from './touch-controls.js';
 import { CaveLevel } from './cave-level.js';
 import { CaveChapter } from './cave-chapter.js';
 import { LIFT_OFFSET } from './lift-asset.js';
+import { Flashlight } from './flashlight.js';
+import { createFlashlightShadow } from './flashlight-shadow.js';
+import { FrameBudget } from './frame-budget.js';
+import { createWebGLTimer } from './gpu-timer.js';
+import { createGLFrameQueue } from './frame-queue.js';
+import { freshInput } from './input.js';
 
 const $ = (id) => document.getElementById(id);
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
@@ -53,17 +59,25 @@ THREE.DefaultLoadingManager.onLoad = () => {
 };
 
 // ------------------------------------------------------------------ render
-const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+const { backend: gpuBackend = null, module: gpuModule = null } = window.__echoBackend || {};
+delete window.__echoBackend;
+let gpuPipeline = null;
+const frameBudget = new FrameBudget({ enabled: localStorage.getItem('echo.performance') !== 'native' });
+const performanceStats = { fps: 0, cpuMs: 0, gpuMs: 0, frames: 0, time: performance.now(), updated: 0 };
+// Scene edges already use SMAA. MSAA on the final fullscreen triangle adds
+// framebuffer bandwidth without anti-aliasing any additional geometry.
+const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
 renderer.setSize(innerWidth, innerHeight);
 renderer.setClearColor(0x000000);
-$('app').appendChild(renderer.domElement);
+$('app').appendChild(gpuBackend?.renderer.domElement || renderer.domElement);
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(80, innerWidth / innerHeight, 0.05, 120);
 camera.rotation.order = 'YXZ';
 
 const composer = new EffectComposer(renderer);
+composer.renderToScreen = false;
 const worldPass = new RenderPass(scene, camera);
 composer.addPass(worldPass);
 // contact shadows in corners, under furniture, in the folds of bodies
@@ -134,6 +148,8 @@ composer.addPass(bloom);
 const fx = new ShaderPass({
   uniforms: {
     tDiffuse: { value: null },
+    uUi: { value: null },
+    uShowUi: { value: 0 },
     uTime: { value: 0 },
     uInterface: { value: 0 },
     uGlitch: { value: 0 },
@@ -148,7 +164,7 @@ const fx = new ShaderPass({
   },
   vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
   fragmentShader: `
-    uniform sampler2D tDiffuse; uniform float uInterface; uniform float uTime, uFear, uFlash, uGlitch, uWhite; uniform vec2 uRes; uniform vec2 uBlur; uniform vec2 uGlassOffset; uniform float uExposure; uniform float uSmear; varying vec2 vUv;
+    uniform sampler2D tDiffuse; uniform sampler2D uUi; uniform float uShowUi; uniform float uInterface; uniform float uTime, uFear, uFlash, uGlitch, uWhite; uniform vec2 uRes; uniform vec2 uBlur; uniform vec2 uGlassOffset; uniform float uExposure; uniform float uSmear; varying vec2 vUv;
     float rand(vec2 c){ return fract(sin(dot(c, vec2(12.9898,78.233))) * 43758.5453); }
     void main(){
       vec2 c = vUv - 0.5;
@@ -190,7 +206,7 @@ const fx = new ShaderPass({
       col = pow(max(col, 0.0), vec3(0.84));
       // high-res CRT: scanlines, aperture-grille phosphors, slow refresh bar, faint interlace
       float sl = 0.5 + 0.5 * sin(gl_FragCoord.y * 3.14159 * 0.5);
-      float slDepth = mix(0.38, 0.24, smoothstep(0.1, 0.7, dot(col, vec3(0.33))));
+      float slDepth = mix(0.24, 0.15, smoothstep(0.1, 0.7, dot(col, vec3(0.33))));
       slDepth *= mix(1.0, 0.55, uInterface);
       col *= ((1.0 - slDepth) + slDepth * 2.0 * sl * 0.92) * (1.0 + slDepth * 0.25);
       float m3 = mod(gl_FragCoord.x, 3.0);
@@ -199,7 +215,7 @@ const fx = new ShaderPass({
       float bar = smoothstep(0.14, 0.0, abs(fract(vUv.y * 0.6 - uTime * 0.07) - 0.5));
       col *= 1.0 + bar * 0.08;
       col *= 1.0 - 0.025 * step(0.5, fract(gl_FragCoord.y * 0.25 + floor(uTime * 30.0) * 0.5));
-      col += (rand(vUv * uRes + fract(uTime * 7.13)) - 0.5) * (0.016 + uFear * 0.04) * mix(1.0, 0.22, uInterface);
+      col += (rand(vUv * uRes + fract(uTime * 7.13)) - 0.5) * (0.009 + uFear * 0.04) * mix(1.0, 0.22, uInterface);
       // tube corners and the dark glass at the very edge
       // The glass lip sits closer than the vignette; the outer bezel stays fixed.
       vec2 cc = abs(uv - 0.5 - uGlassOffset * 0.45) * 2.0;
@@ -216,6 +232,15 @@ const fx = new ShaderPass({
       col *= mix(shadowT, lightT, smoothstep(0.05, 0.6, gl));
       // soft toe: deep shadow keeps a trace of shape instead of crushing to black
       col = col * 1.02 + vec3(0.004) * smoothstep(0.0, 0.03, dot(col, vec3(0.33)));
+      // Read the UI once at the same curved glass coordinates, without the
+      // world's motion smear, RGB separation or bright phosphor bleed.
+      if (uShowUi > 0.5) {
+        vec4 ui = texture2D(uUi, uv);
+        float inkTube = 0.96 + sl * 0.04;
+        vec3 ink = ui.rgb * inkTube * mix(vec3(1.0), mask, 0.12);
+        // Display-space alpha keeps dark paper/menu scrims opaque enough.
+        col = pow(mix(pow(max(col, vec3(0.0)), vec3(1.0 / 2.2)), pow(max(ink * corner, vec3(0.0)), vec3(1.0 / 2.2)), ui.a), vec3(2.2));
+      }
       float lum = max(max(col.r, col.g), col.b);
       col = mix(col, vec3(lum * 1.4 + 0.25, 0.0, 0.0), uFlash * 0.8);
       col = mix(col, vec3(1.0, 0.92, 0.9) - col * 0.6, uWhite);
@@ -225,8 +250,8 @@ const fx = new ShaderPass({
 // anti-alias the scene first, then lay the CRT over it (so the mask stays sharp)
 const smaa = new SMAAPass(Math.max(1, innerWidth * renderer.getPixelRatio()), Math.max(1, innerHeight * renderer.getPixelRatio()));
 composer.addPass(smaa);
-// UI is composited BEFORE the lens/CRT pass so the whole screen shares its
-// convex glass, phosphor mask, scanlines, fringing and vignette.
+// UI is composited inside the final lens/CRT pass with gentle phosphors.
+// It shares the glass curvature while world smear/bleed leave text readable.
 const menuBackground = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType });
 const crtInterface = createCrtInterface(() => 0.3 + (game.state === 'menu' ? 0 : fx.uniforms.uFear.value * 0.12));
 const uiPass = new ShaderPass({
@@ -235,20 +260,18 @@ const uiPass = new ShaderPass({
   fragmentShader: `uniform sampler2D tDiffuse; uniform sampler2D uInterface; uniform sampler2D uBackground; uniform float uCachedBackground; uniform float uShowInterface; varying vec2 vUv;
     void main() {
       vec4 world = uCachedBackground > 0.5 ? texture2D(uBackground, vUv) : texture2D(tDiffuse, vUv);
-      vec4 ui = texture2D(uInterface, vUv);
-      ui.a *= uShowInterface;
-      // Blend DOM scrims in display space, then return to the linear pipeline.
-      vec3 displayWorld = pow(max(world.rgb, vec3(0.0)), vec3(1.0 / 2.2));
-      vec3 displayUI = pow(max(ui.rgb, vec3(0.0)), vec3(1.0 / 2.2));
-      gl_FragColor = vec4(pow(mix(displayWorld, displayUI, ui.a), vec3(2.2)), 1.0);
+      // The final tube pass composites the UI with its own gentle phosphors.
+      gl_FragColor = world;
     }`,
 });
 uiPass.uniforms.uInterface.value = crtInterface.texture;
+fx.uniforms.uUi.value = crtInterface.texture;
 uiPass.uniforms.uBackground.value = menuBackground.texture;
 uiPass.enabled = false;
-composer.addPass(uiPass);
-composer.addPass(fx);
-composer.addPass(new OutputPass());
+const displayComposer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(innerWidth, innerHeight, { type: THREE.HalfFloatType, depthBuffer: false }));
+displayComposer.addPass(uiPass);
+displayComposer.addPass(fx);
+displayComposer.addPass(new OutputPass());
 // The menu keeps a CSS-resolution postprocess chain. Retina game buffers and
 // gameplay passes stay allocated and unchanged, so returning to play is cheap.
 const menuComposer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(innerWidth, innerHeight, { type: THREE.HalfFloatType, depthBuffer: false }));
@@ -263,8 +286,13 @@ addEventListener('resize', () => {
   camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
   composer.setSize(innerWidth, innerHeight);
+  displayComposer.setSize(innerWidth, innerHeight);
   menuComposer.setSize(innerWidth, innerHeight);
   fx.uniforms.uRes.value.set(innerWidth, innerHeight);
+  if (gpuPipeline) {
+    gpuPipeline.renderer.setSize(innerWidth, innerHeight);
+    gpuPipeline.resize();
+  }
 });
 
 // ------------------------------------------------------------------ world
@@ -336,6 +364,7 @@ function updateTimers(dt) {
 }
 
 const player = new Player(camera, level, audio, game);
+const flashlight=new Flashlight();vm.flashlight=flashlight;
 player.vm = vm;
 let touchCd = 0;
 vm.onTouch = (p) => {
@@ -357,7 +386,7 @@ extras.build();
 extras.monster = monster;
 const hospitalObjects=[...scene.children];
 const caveRoot=new THREE.Group();caveRoot.visible=false;scene.add(caveRoot);
-const caveLevel=new CaveLevel(caveRoot);
+const caveLevel=new CaveLevel(caveRoot,{materials:level.mat});
 caveLevel.bindOriginalLift(level);
 const caveBatches=[];caveRoot.traverse(o=>{if(o.userData.staticBatch)caveBatches.push(o);});
 const caveVisibility=new RoomVisibility(caveLevel,caveBatches);
@@ -365,7 +394,7 @@ const caveVisibility=new RoomVisibility(caveLevel,caveBatches);
 // is intended for narrow corridors. Mesh frustum culling still applies here.
 caveVisibility.enabled=false;
 caveVisibility.stats.visible=caveBatches.length;
-const chapter=new CaveChapter({level:caveLevel,root:caveRoot,game,player,monster,audio,vm,save:saveCaveCheckpoint,complete:finishCave,hide:toggleHiding});
+const chapter=new CaveChapter({level:caveLevel,root:caveRoot,game,player,monster,audio,vm,save:saveCaveCheckpoint,complete:finishCave,hide:toggleHiding,take,flashlight});
 function startCave(saved=null,entry=null){
   cancelWork();timers.length=0;hintQueue.length=0;resetObjective();
   siege.stop();
@@ -480,17 +509,25 @@ level.onShutter = (d, closed) => {
 let sens = +$('sens').value;
 let pointerLocked = false;
 let dragLook = false;
-const canvas = renderer.domElement;
+let canvas = gpuBackend?.renderer.domElement || renderer.domElement;
+renderer.domElement.addEventListener('webglcontextlost', e => {
+  e.preventDefault();
+  if (gpuPipeline) return;
+  if (game.state === 'play') pause();
+  document.body.classList.remove('crt-interface-ready');
+});
+renderer.domElement.addEventListener('webglcontextrestored', () => { backgroundDirty = true; menuWasActive = true; });
 
 addEventListener('keydown', (e) => {
   if (e.code === 'Tab' && (game.state === 'play' || game.state === 'note')) e.preventDefault();
+  if (!freshInput(e)) return;
   if (game.state === 'play') player.keys.add(e.code);
-  if (e.repeat) return;
   if (game.state === 'play') {
     if (e.code === 'Escape') { pause(); return; }
     if (player.fallT > 0) return;
+    if(e.code==='KeyT'&&!e.repeat)flashlight.toggle();
     if (e.code === 'KeyF' && !vm.work) player.click();
-    if (e.code === 'KeyC' && !(player.crouch && player.level.ceilAt(Math.floor(player.pos.x), Math.floor(player.pos.z)) < 1.7)) player.crouch = !player.crouch;
+    if (e.code === 'KeyC' && !(player.crouch && (player.level.headroomAt?.(player.pos.x,player.pos.z)??player.level.ceilAt(Math.floor(player.pos.x), Math.floor(player.pos.z))) < 1.7)) player.crouch = !player.crouch;
     if (e.code === 'KeyE') interact();
     if (e.code === 'KeyG' && !vm.work && extras.throwClock(camera)) vm.throw('clock');
     if (siege && siege.active && ['Digit1', 'Digit2', 'Digit3', 'Digit4'].includes(e.code)) {
@@ -513,10 +550,17 @@ addEventListener('keydown', (e) => {
   } else if (game.state === 'note' && (e.code === 'KeyE' || e.code === 'Escape')) closeNote();
 });
 addEventListener('keyup', (e) => player.keys.delete(e.code));
-addEventListener('blur', () => player.keys.clear());
+function clearInput() {
+  player.keys.clear(); player.touchMove = {x:0,y:0}; player.vel.set(0,0,0); dragLook=false;
+  touchControls?.release();
+}
+addEventListener('blur', clearInput);
+addEventListener('pagehide', clearInput);
+document.addEventListener('visibilitychange',()=>{if(document.hidden)clearInput();});
 
-canvas.addEventListener('mousedown', (e) => {
+$('app').addEventListener('mousedown', (e) => {
   if (game.state !== 'play' && game.state !== 'note') return;
+  if (!freshInput(e)) return;
   if (player.fallT > 0) return;
   if (!pointerLocked) {
     lock();
@@ -535,6 +579,7 @@ addEventListener('mouseup', (e) => {
 addEventListener('contextmenu', (e) => e.preventDefault());
 addEventListener('mousemove', (e) => {
   if (game.state !== 'play' && game.state !== 'note') return;
+  if (!freshInput(e)) return;
   if (pointerLocked || dragLook) player.look(e.movementX, e.movementY, 0.0012 * sens);
 });
 document.addEventListener('pointerlockchange', () => {
@@ -561,13 +606,19 @@ const QUALITY = {
 function applyQuality(q) {
   const Q = QUALITY[q] || QUALITY.high;
   renderer.setPixelRatio(Math.min(devicePixelRatio, Q.pr));
-  composer.setPixelRatio ? composer.setPixelRatio(Math.min(devicePixelRatio, Q.pr)) : null;
+  composer.setPixelRatio(Math.min(devicePixelRatio, Q.pr) * frameBudget.scale);
+  displayComposer.setPixelRatio(Math.min(devicePixelRatio, Q.pr));
   composer.setSize(innerWidth, innerHeight);
   smaa.enabled = Q.smaa;
   bloom.enabled = Q.bloom;
   gtao.enabled = Q.ao;
   setRelief(Q.ao ? 1 : 0); // parallax relief on mid and high
   dust.visible = Q.dust;
+  if (gpuPipeline) {
+    gpuPipeline.renderer.setPixelRatio(Math.min(devicePixelRatio, Q.pr));
+    gpuPipeline.renderer.setSize(innerWidth, innerHeight);
+    gpuPipeline.resize();
+  }
   document.querySelectorAll('.quality').forEach((el) => (el.value = q));
   try { localStorage.setItem('echo.quality', q); } catch (_) {}
 }
@@ -671,15 +722,19 @@ function updateObjective() {
 }
 
 function updateHUD() {
+  $('lamp-status').classList.toggle('hidden',!flashlight.owned||!chapter.active);
+  $('lamp-state').textContent=flashlight.shaking?'ЗАРЯДКА':flashlight.on?'ФОНАРЬ':'ФОНАРЬ ВЫКЛ.';
+  $('lamp-charge').textContent=`${Math.round(flashlight.charge*100)}%`;
+  $('lamp-status').classList.toggle('low',flashlight.charge<.15);
   updateObjective();
   const bm = $('m-breath');
   bm.querySelector('i').style.width = `${player.breathCap * 100}%`;
   bm.classList.toggle('holding', player.holding);
   bm.classList.toggle('low', player.breathCap < 0.25);
-  bm.style.opacity = player.holding || player.breathCap < 0.99 ? 1 : 0.25;
+  bm.style.opacity = player.holding || player.breathCap < 0.99 ? 1 : 0.6;
   const sm = $('m-stamina');
   sm.querySelector('i').style.width = `${player.stamina * 100}%`;
-  sm.style.opacity = player.stamina < 0.99 ? 1 : 0.25;
+  sm.style.opacity = player.stamina < 0.99 ? 1 : 0.6;
   $('stones').textContent = [player.stones ? `КАМНИ: ${player.stones}` : '', extras.held.length ? `БУДИЛЬНИКИ: ${extras.held.length}` : ''].filter(Boolean).join('   ');
   $('stance').textContent = player.listening ? 'ВСЛУШИВАЕШЬСЯ' : player.holding ? 'НЕ ДЫШИШЬ' : player.hidden ? (player.hidden.low ? 'ПОД КРОВАТЬЮ' : 'В ШКАФЧИКЕ') : player.crouch ? 'КРАДЁШЬСЯ' : '';
 }
@@ -881,9 +936,9 @@ function updateHold(dt) {
       }
     }
     const frame=hold.generator.frame;
-    generatorProps.sync(game.flags,frame);
+    generatorProps.sync(game.flags,frame,dt);
     const target=frame.kind==='insertFuse'?generatorProps.sockets[frame.slot]:frame.kind==='prime'?generatorProps.knob.getWorldPosition(V(0,0,0)):generatorProps.funnel;
-    vm.work={...frame,target:target.clone(),normal:V(0,0,1)};
+    vm.work={...frame,target:target.clone(),normal:V(0,0,1),anchor:frame.kind==='prime'?generatorProps.knob:null};
     const flowing=frame.kind==='pour'&&frame.k>.2&&frame.k<.86;
     if(flowing!==pouringActive){
       if(flowing&&!pouringLoop)pouringLoop=audio.createLoop('loop_water',generatorProps.funnel,.16,{rate:1.5,ref:.6,roll:1.5});
@@ -1873,11 +1928,22 @@ function updateCachedBackground(menu, now) {
   menuPerformance.worldFrames++;
   menuPerformance.lastWorldMs = performance.now() - start;
 }
+const glLampShadow=createFlashlightShadow(renderer,scene);
+const glFrameQueue=createGLFrameQueue(renderer.getContext());
+renderer.domElement.addEventListener('webglcontextrestored',()=>glFrameQueue.reset());
 function renderView(menu) {
+  if(gpuPipeline ? !gpuPipeline.ready() : !glFrameQueue.ready())return;
+  if(menu||['dead','dying','end'].includes(game.state))lampLight.origin.value.w=0;
   roomVisibility.update(menu ? menuCamera : camera);
   crtInterface.update(performance.now());
   fx.uniforms.uInterface.value = crtInterface.isMenu ? 1 : 0;
+  fx.uniforms.uShowUi.value = crtInterface.visible ? 1 : 0;
   const cached = menu || game.state === 'paused' || game.state === 'dead';
+  if (gpuPipeline) {
+    try { gpuPipeline.render(menu, cached); return true; }
+    catch (error) { fallbackWebGL(error); }
+  }
+  glLampShadow.render();
   if (cached) updateCachedBackground(menu, performance.now());
   else {
     backgroundMode = null;
@@ -1893,8 +1959,8 @@ function renderView(menu) {
     worldPasses.forEach((pass) => { pass.enabled = false; });
     fx.uniforms.uBlur.value.set(0, 0);
   }
-  uiPass.enabled = cached || crtInterface.visible;
-  uiPass.uniforms.uCachedBackground.value = cached ? 1 : 0;
+  uiPass.enabled = true;
+  uiPass.uniforms.uCachedBackground.value = 1;
   uiPass.uniforms.uShowInterface.value = crtInterface.visible ? 1 : 0;
   // Menu pulses must not inherit the previous session's panic effects.
   const saved = {};
@@ -1906,79 +1972,101 @@ function renderView(menu) {
     fx.uniforms.uBlur.value.set(0, 0);
   } else if (menuWasActive) {
     const target = renderer.getRenderTarget();
-    for (const buffer of [afterimage.textureOld, afterimage.textureComp]) {
+    for (const buffer of [afterimage._textureOld, afterimage._textureComp]) {
       renderer.setRenderTarget(buffer);
       renderer.clear();
     }
     renderer.setRenderTarget(target);
   }
   try {
-    (cached ? menuComposer : composer).render();
+    if (!cached) {
+      glTimer.begin();
+      composer.render();
+      uiPass.uniforms.uBackground.value = composer.readBuffer.texture;
+      displayComposer.render();
+      glTimer.end();
+    } else {
+      uiPass.uniforms.uBackground.value = menuBackground.texture;
+      menuComposer.render();
+    }
     if (cached) menuPerformance.interfaceFrames++;
+    glFrameQueue.submitted();
   } finally {
     worldPasses.forEach((pass, index) => { pass.enabled = enabled[index]; });
     for (const key in saved) fx.uniforms[key].value = saved[key];
   }
+  return true;
 }
 
 // ------------------------------------------------------------------ loop
-const clock = new THREE.Clock();
+const clock = new THREE.Timer();
+clock.connect(document);
 function frame() {
   requestAnimationFrame(frame);
+  clock.update();
   const rdt = Math.min(0.05, clock.getDelta());
   if (document.hidden) return;
+  if (!gpuPipeline && renderer.getContext().isContextLost()) return;
+  const cpuStarted = performance.now();
+  glTimer.poll();
   const menu = game.state === 'menu';
   if (menu && menuReady) updateMenuBackground(rdt);
   if (!window.__freeze) tick(rdt);
   touchControls.update();
-  if (innerWidth > 0 && innerHeight > 0 && (!menu || menuReady || crtInterface.visible)) renderView(menu);
+  const drawn=innerWidth > 0 && innerHeight > 0 && (!menu || menuReady || crtInterface.visible) && renderView(menu);
   menuWasActive = menu && menuReady;
+  updatePerformance(cpuStarted,drawn);
+}
+function updateViewModel(dt){
+  flashlight.update(dt,{live:game.state==='play'||game.state==='note',quiet:player.holding||player.listening,shake:player.keys.has('KeyR'),canShake:game.state==='play'&&!vm.work&&!player.hidden&&!player.holding&&!player.listening&&player.fallT<=0&&vm.actT<=0&&vm.throwT<=0},()=>{
+    audio.play('knock',camera.position,{gain:.2,rate:1.6,wet:.45});audio.play('tick',camera.position,{gain:.22,rate:1.2,wet:.25});
+    game.noise(camera.position.clone(),{radius:9,visual:2.5,source:'player',kind:'door',color:COLORS.machine,strength:.3,decay:1.5});
+  });
+  vm.update(dt,camera,player);
+  const visible=vm.torch.visible&&vm.root.visible;
+  const at=visible?vm.torch.muzzle.getWorldPosition(new THREE.Vector3()):camera.position;
+  const direction=visible?new THREE.Vector3(0,0,-1).transformDirection(vm.torch.matrixWorld):camera.getWorldDirection(new THREE.Vector3());
+  lampLight.origin.value.set(at.x,at.y,at.z,visible?flashlight.power*3:0);
+  lampLight.direction.value.set(direction.x,direction.y,direction.z,18);
 }
 function tick(dt) {
   updateCrtParallax(dt);
   fx.uniforms.uTime.value += dt;
   const live = game.state === 'play' || game.state === 'note' || game.state === 'dying';
-  if(chapter.active&&live){
-    game.time+=dt;echo.update(dt);
-    if(game.state==='play')$('prompt').textContent=chapter.update(dt,camera);
-    player.update(dt,scene);camera.updateMatrixWorld(true);
-    if(player.pitFall?.impacted&&game.state==='play')die('pit');
-    vm.root.visible=game.state!=='dying'&&!player.pitFall&&!player.hidden;vm.update(dt,camera,player);
-    monster.update(dt,player,game);
-    if(game.state==='dying')updateScare(dt);
-    updateAmbient(dt,player.level);updateFear(dt);updateListen(dt);updateHint(dt);updateHUD();
-    updateTimers(dt);touchCd-=dt;
-    dust.material.uniforms.uCam.value.copy(camera.position);audio.setListener(camera);
-    return;
-  }
   if (live) {
     game.time += dt;
     echo.update(dt);
+    if(chapter.active&&game.state==='play')chapter.update(dt,camera);
     player.update(dt, scene);
-    if (player.fallT > 0 && (itemAction || hold)) cancelWork();
-    player.actionLean = itemAction?.kind==='pickupFuse' ? -Math.min(.8,Math.max(0,player.eye-.8)) * THREE.MathUtils.smoothstep(itemAction.t/itemAction.duration,0,.25) * (1-THREE.MathUtils.smoothstep(itemAction.t/itemAction.duration,.55,.9)) : 0;
-    camera.position.y += player.actionLean;
-    if(player.actionLean)camera.rotation.x += player.actionLean*.22;
+    if(player.pitFall?.impacted&&game.state==='play')die('pit');
     camera.updateMatrixWorld(true);
-    updateItemAction(dt);
-    updateHold(dt);
-    if(chapter.active){
-      camera.updateMatrixWorld(true);vm.update(dt,camera,player);audio.setListener(camera);return;
+    if(!chapter.active){
+      if (player.fallT > 0 && (itemAction || hold)) cancelWork();
+      player.actionLean = itemAction?.kind==='pickupFuse' ? -Math.min(.8,Math.max(0,player.eye-.8)) * THREE.MathUtils.smoothstep(itemAction.t/itemAction.duration,0,.25) * (1-THREE.MathUtils.smoothstep(itemAction.t/itemAction.duration,.55,.9)) : 0;
+      camera.position.y += player.actionLean;
+      if(player.actionLean)camera.rotation.x += player.actionLean*.22;
+      camera.updateMatrixWorld(true);
+      updateItemAction(dt);
+      updateHold(dt);
+      if(chapter.active){
+        camera.updateMatrixWorld(true);updateViewModel(dt);audio.setListener(camera);return;
+      }
+      if(!hold?.generator)generatorProps.sync(game.flags,null,dt);
     }
-    if(!hold?.generator)generatorProps.sync(game.flags);
-    vm.root.visible = game.state !== 'dying' && !player.hidden;
-    vm.update(dt, camera, player);
+    vm.root.visible = game.state !== 'dying' && !player.hidden && !player.pitFall;
+    updateViewModel(dt);
+    if(chapter.active&&game.state==='play')chapter.spider.update(dt,player,lampLight);
     monster.update(dt, player, game);
     if (game.state === 'dying') updateScare(dt);
-    level.updateDoors(dt);
-    updateAmbient(dt);
+    player.level.updateDoors(dt);
+    updateAmbient(dt,player.level);
     updateFear(dt);
-    updateDread(dt);
+    if(!chapter.active)updateDread(dt);
     updateListen(dt);
     updateTimers(dt);
     touchCd -= dt;
     if (siege.active) siege.update(dt);
-    extras.update(dt);
+    if(!chapter.active)extras.update(dt);
     if (radarT > 0) {
       radarT -= dt;
       drawRadar(radarNode);
@@ -1987,30 +2075,98 @@ function tick(dt) {
     dust.material.uniforms.uCam.value.copy(camera.position);
     audio.setListener(camera);
     if (game.state === 'play' && player.fallT <= 0) {
-      focus = findFocus();
-      $('prompt').textContent = promptFor(focus);
+      focus = chapter.active?chapter.focus(camera):findFocus();
+      $('prompt').textContent = chapter.active?chapter.prompt(focus):promptFor(focus);
       $('crosshair').classList.toggle('focus', !!focus);
     } else $('prompt').textContent = '';
     updateHint(dt);
-    updateLocation(dt);
+    if(!chapter.active)updateLocation(dt);
     updateHUD();
   } else if (game.state === 'end') {
     echo.update(dt);
   }
 }
 const touchControls=createTouchControls({
+  flashlight,
   player,game,siege,pause,closeNote,
   mapPoint: crtInterface.mapPoint,
   look:(dx,dy)=>player.look(dx,dy,0.0035*sens),
   throwItem:()=>{if(game.state!=='play'||vm.work||player.fallT>0)return;if(extras.held.length){if(extras.throwClock(camera))vm.throw('clock');}else{if(player.stones>0)vm.throw();player.throwStone(scene);}},
 });
+function sampleGpu(ms) {
+  if (!Number.isFinite(ms) || ms <= 0 || ms > 150) return;
+  const frameMs = performanceStats.fps > 10 ? 1000 / performanceStats.fps : 0;
+  // Some ANGLE timer implementations report queued latency. Do not present
+  // it as GPU execution time or reduce resolution on a CPU-bound frame.
+  if (frameMs && ms > frameMs * 2.2) {
+    performanceStats.gpuMs = 0;
+    if (performanceStats.cpuMs > 12) return;
+    ms = frameMs;
+  } else performanceStats.gpuMs = ms;
+  if (game.state !== 'play') return;
+  const pressure = performanceStats.fps >= 58 ? Math.min(ms, 16) : ms;
+  if (frameBudget.sample(pressure, performance.now())) {
+    composer.setPixelRatio(renderer.getPixelRatio() * frameBudget.scale);
+    gpuPipeline?.resize();
+  }
+}
+function updatePerformance(cpuStarted,drawn) {
+  const now = performance.now();
+  performanceStats.cpuMs = performanceStats.cpuMs * .9 + (now - cpuStarted) * .1;
+  if(drawn)performanceStats.frames++;
+  if (now - performanceStats.time < 500) return;
+  performanceStats.fps = performanceStats.frames * 1000 / (now - performanceStats.time);
+  performanceStats.frames = 0; performanceStats.time = now;
+  const target = gpuPipeline?.world || composer.readBuffer;
+  const text = `${gpuPipeline ? 'WebGPU' : 'WebGL 2'} · ${Math.round(performanceStats.fps)} FPS\nGPU ${performanceStats.gpuMs ? performanceStats.gpuMs.toFixed(1) + ' ms' : '—'} · CPU ${performanceStats.cpuMs.toFixed(1)} ms\nМир ${target.width} × ${target.height} · ${Math.round(frameBudget.scale * 100)}%`;
+  $('render-stats').textContent = text;
+  $('render-status').textContent = text.replaceAll('\n', ' · ');
+}
+function fallbackWebGL(error) {
+  if (!gpuPipeline) return;
+  console.warn('WebGPU stopped; continuing with WebGL.', error);
+  sessionStorage.setItem('echo.webgpu-failed', '1');
+  gpuPipeline.restore(); gpuPipeline = null;
+  performanceStats.gpuMs = 0;
+  camera.coordinateSystem = THREE.WebGLCoordinateSystem; camera.updateProjectionMatrix();
+  menuCamera.coordinateSystem = THREE.WebGLCoordinateSystem; menuCamera.updateProjectionMatrix();
+  canvas = renderer.domElement; $('app').replaceChildren(canvas);
+  frameBudget.setEnabled(localStorage.getItem('echo.performance') !== 'native');
+  backgroundDirty = true; menuWasActive = true; applyQuality(savedQ);
+}
+addEventListener('keydown', e => { if (e.code === 'F3') { e.preventDefault(); document.body.classList.toggle('render-debug'); } });
+$('render-engine').value = localStorage.getItem('echo.renderer') || 'auto';
+$('render-engine').addEventListener('change', e => {
+  localStorage.setItem('echo.renderer', e.target.value); sessionStorage.removeItem('echo.webgpu-failed');
+  const url = new URL(location.href); url.searchParams.delete('renderer'); history.replaceState(null, '', url); location.reload();
+});
+$('render-performance').value = frameBudget.enabled ? 'auto' : 'native';
+$('render-performance').addEventListener('change', e => {
+  localStorage.setItem('echo.performance', e.target.value); frameBudget.setEnabled(e.target.value === 'auto');
+  composer.setPixelRatio(renderer.getPixelRatio()); gpuPipeline?.resize();
+});
+const glTimer = createWebGLTimer(renderer, sampleGpu);
+if (gpuBackend) try { gpuPipeline = gpuModule.createWebGPUPipeline(gpuBackend, {
+  scene, camera, menuCamera, vm, dust, fx, crtInterface, afterimage, bloom, gtao, smaa,
+  setRelief, getRelief: () => pomScale, menuPerformance, frameBudget, sampleGpu,
+}); } catch (error) {
+  sessionStorage.setItem('echo.webgpu-failed', '1');
+  location.reload();
+  throw error;
+}
+if (gpuPipeline) {
+  gpuPipeline.renderer.backend.device.addEventListener('uncapturederror', e => fallbackWebGL(e.error));
+  gpuPipeline.renderer.backend.device.lost.then(info => fallbackWebGL(info.message));
+}
 applyQuality(savedQ);
 frame();
 
 // debug handle
 window.__siege = siege;
 window.__game = {
-  game, player, monster, level, echo, audio, camera, menuCamera, vm, gtao, composer, extras, crtInterface, menuPerformance, menuBackground, menuComposer, generatorProps, roomVisibility, chapter, caveLevel, startCave,
+  game, player, monster, level, echo, audio, camera, menuCamera, vm, gtao, composer, extras, crtInterface, menuPerformance, menuBackground, menuComposer, displayComposer, generatorProps, roomVisibility, performanceStats, frameBudget, fallbackWebGL,
+  chapter, caveLevel, startCave, flashlight, lampLight,
+  get gpu() { return gpuPipeline; },
   tick(n = 1, dt = 1 / 60) {
     for (let i = 0; i < n; i++) tick(dt);
   },
@@ -2027,7 +2183,8 @@ window.__game = {
 // Compact browser verification hooks; world coordinates: +X east, +Z south.
 window.render_game_to_text = () => JSON.stringify({
   screen: front.screen, mode: game.state,
-  chapter: chapter.active?{id:2,...chapter.sequence.snapshot(),assets:caveLevel.assetStats}:{id:1},
+  flashlight:{...flashlight.snapshot(),shaking:flashlight.shaking,power:flashlight.power},
+  chapter: chapter.active?{id:2,...chapter.sequence.snapshot(),assets:caveLevel.assetStats,spider:chapter.spider.snapshot()}:{id:1},
   loading: { label: $('load-label').textContent, progress: +$('load-progress').getAttribute('aria-valuenow') },
   menuBackground: menuReady ? 'live-3d-level' : 'loading',
   crtInterface: crtInterface.ready,
@@ -2035,7 +2192,7 @@ window.render_game_to_text = () => JSON.stringify({
   interfaceLayer: crtInterface.layer,
   playerMeters: document.body.classList.contains('show-player-meters'),
   touch: touchControls.enabled,
-  rendering: { ratio: composer.renderer.getPixelRatio(), visibleBatches: roomVisibility.stats.visible, totalBatches: roomVisibility.stats.total },
+  rendering: { backend: gpuPipeline ? 'webgpu' : 'webgl', fps: +performanceStats.fps.toFixed(1), gpuMs: +performanceStats.gpuMs.toFixed(2), cpuMs: +performanceStats.cpuMs.toFixed(2), scale: +frameBudget.scale.toFixed(3), ratio: (gpuPipeline?.renderer || renderer).getPixelRatio(), width: (gpuPipeline?.world || composer.readBuffer).width, height: (gpuPipeline?.world || composer.readBuffer).height, visibleBatches: roomVisibility.stats.visible, totalBatches: roomVisibility.stats.total },
   objective: { text: lastObjective, visible: $('objective').classList.contains('visible') },
   audioReady: audio.ready, checkpoint: !!loadSave(),
   player: { x: +player.pos.x.toFixed(2), y: +player.pos.y.toFixed(2), z: +player.pos.z.toFixed(2), crouching: player.crouch, stones: player.stones, falling: player.fallT > 0 || !!player.pitFall, pitFall: !!player.pitFall, recovery: +player.fallT.toFixed(2), falls: player.falls },

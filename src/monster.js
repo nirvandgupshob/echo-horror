@@ -858,6 +858,7 @@ export class Monster {
     const kill = this.state === 'kill';
 
     if (kill && this.scare) this.scare.t += dt;
+    this.pos.y=this.level.floorHeightAt?.(this.pos.x,this.pos.z)||0;
     this.obj.position.copy(this.pos);
     this.obj.rotation.y = this.yaw;
     // fit the room: it folds itself smaller under low ceilings and in the duct,
@@ -1040,7 +1041,8 @@ export class Monster {
         this.pos.z += sc.cam.z + sc.f.z * d - this.headWorld.z;
         if(this.level.isPit)this.keepClear();
         b.hips.position.y += (sc.cam.y + 0.08 - this.headWorld.y) / 1.12;
-        this.obj.position.copy(this.pos);
+        this.pos.y=this.level.floorHeightAt?.(this.pos.x,this.pos.z)||0;
+    this.obj.position.copy(this.pos);
         this.obj.updateMatrixWorld(true);
         // stare straight down the lens, shaking
         b.head.lookAt(sc.cam.x, sc.cam.y - 0.12, sc.cam.z);

@@ -15,6 +15,9 @@ const shared = {
   uListen: { value: 0 }, // the creature's (red) waves are only seen while you listen
 };
 
+const lampDummy=new THREE.DataTexture(new Uint8Array([255,255,255,255]),1,1);lampDummy.needsUpdate=true;
+export const lampLight={origin:{value:new THREE.Vector4(0,0,0,0)},direction:{value:new THREE.Vector4(0,0,-1,18)},matrix:{value:new THREE.Matrix4()},shadow:{value:lampDummy}};
+
 export const COLORS = {
   player: new THREE.Color(0.55, 0.85, 1.0),
   click: new THREE.Color(0.75, 0.95, 1.0),
@@ -67,9 +70,33 @@ const FRAG = /* glsl */ `
   uniform vec4 uQ[MAXP];
   uniform vec3 uC[MAXP];
   uniform float uTime;
+  uniform vec4 uLampOrigin, uLampDirection;
+  uniform mat4 uLampMatrix;
+  uniform sampler2D uLampShadow;
+  float lampFalloff(vec3 p){
+    vec3 to=p-uLampOrigin.xyz;float d=length(to);
+    return uLampOrigin.w*smoothstep(0.9205,0.9599,dot(to/max(d,.001),uLampDirection.xyz))*(1.0-smoothstep(12.0,18.0,d))/(1.0+d*d*.08);
+  }
+  float lampVisibility(vec3 p){
+    vec4 clip=uLampMatrix*vec4(p,1.0);vec2 st=clip.xy/clip.w*.5+.5;
+    if(clip.w<=0.0||min(st.x,st.y)<0.0||max(st.x,st.y)>1.0)return 0.0;
+    float depth=dot(p-uLampOrigin.xyz,uLampDirection.xyz)/18.0-.0025;
+    vec2 px=vec2(1.0/512.0);float light=0.0;
+    light+=step(depth,texture2D(uLampShadow,st+vec2(-px.x,-px.y)).r);
+    light+=step(depth,texture2D(uLampShadow,st+vec2(px.x,-px.y)).r);
+    light+=step(depth,texture2D(uLampShadow,st+vec2(-px.x,px.y)).r);
+    light+=step(depth,texture2D(uLampShadow,st+vec2(px.x,px.y)).r);
+    return light*.25;
+  }
   uniform vec3 uTint;
   uniform float uBoost;
   uniform float uPat;
+  #ifndef SURFACE_PATTERN
+    #define SURFACE_PATTERN uPat
+    #define HUMAN_SKIN uHuman
+    #define HAS_GRIME 1
+    #define HAS_RELIEF 1
+  #endif
   uniform float uLit;
   uniform float uHuman;
   uniform sampler2D uTex;
@@ -144,6 +171,7 @@ const FRAG = /* glsl */ `
     float fade = smoothstep(12.0, 5.0, distance(vW, cameraPosition));
     float pd = uPom * sc * fade;
     float cav = 1.0;
+    #if HAS_RELIEF
     if (pd > 0.0005) {
       vec3 Vw = normalize(cameraPosition - vW);
       vec3 r;
@@ -153,6 +181,7 @@ const FRAG = /* glsl */ `
       // the bottoms of the seams and pits catch less of anything
       cav = mix(1.0, mix(0.3, 1.0, smoothstep(0.0, 0.85, r.z)), fade * min(1.0, uPom * 50.0));
     }
+    #endif
     vec3 a = vec3(0.0);
     vec2 tX = vec2(0.0), tY = vec2(0.0), tZ = vec2(0.0);
     rough = 0.0;
@@ -169,7 +198,7 @@ const FRAG = /* glsl */ `
     #ifdef SURFACE
       // Opaque unlit pixels are exactly black. Avoid triplanar/POM/noise work
       // there, retaining their depth so walls still occlude lit surfaces.
-      if (uLit <= 0.0 && uPat < 7.5) {
+      if (uLit <= 0.0 && (SURFACE_PATTERN < 7.5 || SURFACE_PATTERN > 8.5) && lampFalloff(vW) < .0001) {
         bool reached = false;
         for (int i = 0; i < MAXP; i++) {
           if (float(i) >= uN) break;
@@ -184,7 +213,7 @@ const FRAG = /* glsl */ `
     #ifdef SURFACE
       // decals live on one face of a wall with no thickness: from behind they
       // must not show through it
-      if (uPat > 7.5 && dot(n, V) < 0.0) discard;
+      if (SURFACE_PATTERN > 7.5 && SURFACE_PATTERN < 8.5 && dot(n, V) < 0.0) discard;
       if (dot(n, V) < 0.0) n = -n; // double-sided / inverted geometry
     #endif
     vec3 albedo = vec3(0.5);
@@ -193,7 +222,13 @@ const FRAG = /* glsl */ `
 
     #ifdef SURFACE
       float alpha = 1.0;
-      if (uPat > 7.5) {
+      if (SURFACE_PATTERN > 8.5) {
+        vec2 rp=vec2(sin(vW.x*1.8+uTime*.7+vW.z*.3),sin(vW.z*2.1-uTime*.55+vW.x*.25));
+        vec2 fine=vec2(sin(vW.x*12.0+uTime*1.2),sin(vW.z*10.0-uTime*.9));
+        N=normalize(vec3((rp.x*.035+fine.x*.007),1.0,(rp.y*.035+fine.y*.007)));
+        albedo=vec3(.028,.048,.046);rough=.19;
+        alpha=.62+pow(1.0-max(dot(N,V),0.0),4.0)*.28;
+      } else if (SURFACE_PATTERN > 7.5) {
         // decal: RGBA texture on a quad
         vec4 dc = texture2D(uTex, vUv);
         albedo = dc.rgb;
@@ -202,31 +237,31 @@ const FRAG = /* glsl */ `
         rough = uWet > 0.0 ? mix(0.7, 0.18, uWet * smoothstep(0.3, 0.9, alpha)) : 0.85;
         N = n;
       } else
-      if (uPat < 4.5 || (uPat > 6.5 && uPat < 7.5)) {
+      if (SURFACE_PATTERN < 4.5 || (SURFACE_PATTERN > 6.5 && SURFACE_PATTERN < 7.5)) {
         // triplanar photo material (pat 7: two-tone wall, lower part uses map 2)
         vec3 nb = uLocal > 0.5 ? normalize(vNo) : n;
         vec3 bw = pow(abs(nb), vec3(4.0));
         bw /= (bw.x + bw.y + bw.z);
-        albedo = tri(uTex, uNrm, uHgt, uScale, n, bw, N, rough);
-        if (uPat > 6.5) {
+        if (SURFACE_PATTERN > 6.5) {
           float wob = (vnoise(vec3(vW.x * 3.0, 0.0, vW.z * 3.0)) - 0.5) * 0.015;
           if (vW.y < uSplit + wob) albedo = tri(uTex2, uNrm2, uHgt2, uScale2, n, bw, N, rough);
+          else albedo = tri(uTex, uNrm, uHgt, uScale, n, bw, N, rough);
           // painted divider stripe
           float st = smoothstep(0.035, 0.02, abs(vW.y - uSplit - wob));
           albedo = mix(albedo, albedo * 0.35, st);
-        }
-        if (uPat > 0.5 && uPat < 1.5) {
+        } else albedo = tri(uTex, uNrm, uHgt, uScale, n, bw, N, rough);
+        if (SURFACE_PATTERN > 0.5 && SURFACE_PATTERN < 1.5) {
           // standing water over the tiles: dark, mirror-like, rippling
           vec2 rp = vec2(sin(vW.x * 7.0 + uTime * 1.4 + sin(vW.z * 3.0)), sin(vW.z * 6.0 - uTime * 1.1 + sin(vW.x * 2.0)));
           vec2 rp2 = vec2(sin(vW.x * 19.0 - uTime * 2.3 + vW.z * 4.0), sin(vW.z * 17.0 + uTime * 1.9 - vW.x * 3.0));
           N = normalize(vec3(0.0, 1.0, 0.0) + vec3(rp.x + rp2.x * 0.5, 0.0, rp.y + rp2.y * 0.5) * 0.14);
           albedo *= 0.12;
           rough = 0.12;
-        } else if (uPat > 2.5 && uPat < 3.5) {
+        } else if (SURFACE_PATTERN > 2.5 && SURFACE_PATTERN < 3.5) {
           // crushed glass on the floor glints
           if (hash(floor(vW * 40.0)) > 0.93) { rough = 0.02; N = normalize(n + (vec3(hash(floor(vW * 41.0)), 0.0, hash(floor(vW * 43.0))) - 0.5) * 1.2); }
         }
-        if (uGrime > 0.0) {
+        if (HAS_GRIME > 0) {
           // water stains running down from the ceiling, damp rising from the floor, mould
           float h = vW.x * 1.7 + vW.z * 1.7;
           float drip = smoothstep(0.55, 0.85, vnoise(vec3(h * 4.0, vW.y * 0.35, 0.0))) * smoothstep(0.0, 1.5, vW.y);
@@ -236,7 +271,7 @@ const FRAG = /* glsl */ `
           albedo *= mix(vec3(1.0), vec3(0.32, 0.3, 0.24), g);
           rough = mix(rough, 0.25, damp * uGrime * 0.6);
         }
-      } else if (uPat < 5.5) {
+      } else if (SURFACE_PATTERN < 5.5) {
         // flesh: clammy, mottled, wet skin with veins
         float m = fbm(pW * 9.0);
         float veins = smoothstep(0.03, 0.0, abs(fbm(pW * 4.0 + 3.1) - 0.5)) * 0.6;
@@ -248,7 +283,7 @@ const FRAG = /* glsl */ `
         vec3 grad = vec3(vnoise((pW + vec3(e, 0, 0)) * 30.0) - h0, vnoise((pW + vec3(0, e, 0)) * 30.0) - h0, vnoise((pW + vec3(0, 0, e)) * 30.0) - h0) / e * 0.6;
         N = normalize(n - (grad - dot(grad, n) * n) * 0.02 * uBump);
         rough = mix(0.75, 0.3, uWet * smoothstep(0.35, 0.7, fbm(pW * 5.0 + 7.0)));
-        if (uHuman > 0.5) {
+        if (HUMAN_SKIN > 0.5) {
           // Living hands: subtle pores/colour, without the creature's wet mottling.
           float pores = vnoise(pW * 240.0);
           float tone = vnoise(pW * 35.0);
@@ -263,7 +298,7 @@ const FRAG = /* glsl */ `
     #endif
 
     #ifdef USE_COLOR
-      albedo *= vColor;
+      albedo *= vColor.rgb;
     #endif
     vec3 acc = vec3(0.0);
     vec3 edge = vec3(0.0);
@@ -302,7 +337,7 @@ const FRAG = /* glsl */ `
         vec3 H = normalize(L + V);
         float shin = mix(90.0, 6.0, rough);
         float spec = pow(max(dot(N, H), 0.0), shin) * (1.0 - rough) * (1.0 + uWet * 2.0);
-        float fres = uPat > 0.5 && uPat < 1.5 ? pow(1.0 - max(dot(N, V), 0.0), 4.0) * 0.5 : 0.0;
+        float fres = SURFACE_PATTERN > 0.5 && SURFACE_PATTERN < 1.5 ? pow(1.0 - max(dot(N, V), 0.0), 4.0) * 0.5 : 0.0;
         acc += c * wave * (dif * albedo + spec * 0.5 + fres);
       #else
         edge += c * wave;
@@ -326,13 +361,19 @@ const FRAG = /* glsl */ `
         float dif = pow(max(dot(N, L), 0.0), 1.4);
         vec3 H = normalize(L + V);
         litTerm = uLit * (albedo * (0.05 + dif * 1.4) + pow(max(dot(N, H), 0.0), 40.0) * 0.6);
-        if (uHuman > 0.5) {
+        if (HUMAN_SKIN > 0.5) {
           // Soft light above the player gives tendons/knuckles volume even
           // between echoes, without the creature's harsh wet under-light.
           L = normalize(cameraPosition + vec3(-0.45, 0.8, 0.3) - vW);
           H = normalize(L + V);
           litTerm = uLit * (albedo * (0.18 + max(dot(N, L), 0.0) * 1.05) + pow(max(dot(N, H), 0.0), 25.0) * 0.05);
         }
+      }
+      float beam=lampFalloff(vW);
+      if(beam>.0001){
+        vec3 L=normalize(uLampOrigin.xyz-vW),H=normalize(L+V);
+        float spec=pow(max(dot(N,H),0.0),mix(95.0,10.0,rough))*(1.0-rough);
+        litTerm+=vec3(1.0,.94,.82)*beam*lampVisibility(vW)*(albedo*(.07+max(dot(N,L),0.0)*1.45)+spec*.35);
       }
       col = (acc * fog * 1.25 + litTerm) * uBoost * uTint;
     #else
@@ -381,12 +422,12 @@ const RELIEF = {
 };
 export function echoMaterial({ kind = 'surface', tint = 0xffffff, boost = 1, pat = 0, map = 'metal', scale = 0.5, bump = 1, wet = 0, map2 = null, scale2 = 0.5, split = 1.4, grime = 0, human = false } = {}) {
   const surface = kind === 'surface';
-  const relief = surface && pat !== 1 && pat !== 3 && pat !== 8 ? RELIEF[map] ?? 0 : 0;
+  const relief = surface && pat !== 1 && pat !== 3 && pat !== 8 && pat !== 9 ? RELIEF[map] ?? 0 : 0;
   const m = new THREE.ShaderMaterial({
     vertexShader: VERT,
     fragmentShader: FRAG,
     vertexColors: human,
-    defines: surface ? { SURFACE: 1 } : {},
+    defines: surface ? { SURFACE: 1, SURFACE_PATTERN: pat.toFixed(1), HUMAN_SKIN: human ? '1.0' : '0.0', HAS_GRIME: grime > 0 ? 1 : 0, HAS_RELIEF: relief > 0 ? 1 : 0 } : {},
     uniforms: {
       uTime: shared.uTime,
       uP: shared.uP,
@@ -394,6 +435,7 @@ export function echoMaterial({ kind = 'surface', tint = 0xffffff, boost = 1, pat
       uC: shared.uC,
       uN: shared.uN,
       uListen: shared.uListen,
+      uLampOrigin:lampLight.origin,uLampDirection:lampLight.direction,uLampMatrix:lampLight.matrix,uLampShadow:lampLight.shadow,
       uTint: { value: new THREE.Color(tint) },
       uBoost: { value: boost },
       uPat: { value: pat },
@@ -423,6 +465,7 @@ export function echoMaterial({ kind = 'surface', tint = 0xffffff, boost = 1, pat
     m.polygonOffsetFactor = 1;
     m.polygonOffsetUnits = 1;
   }
+  if(pat===9){m.transparent=true;m.depthWrite=false;m.polygonOffset=false;}
   if (pat === 8) {
     m.transparent = true;
     m.depthWrite = false;

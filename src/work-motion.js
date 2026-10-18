@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import {CANE_AXIS} from './hands.js';
 const V=(x,y,z)=>new THREE.Vector3(x,y,z);
 const {smoothstep:ss,lerp}=THREE.MathUtils;
 const grip=V(0,-.031,-.068);
@@ -7,28 +8,71 @@ function handQ(fingers,back){const z=fingers.clone().normalize().negate(),y=back
 const wrist=(point,q,pose='fuseGrip')=>({pos:point.clone().sub(grip.clone().applyQuaternion(q)),q,pose});
 const rest=V(-.24,-.48,-.24);
 
-export const valveRotation = time => time * 2;
+// Reach first, ease the mechanism into motion, then settle before releasing.
+export function workProgress(time,duration){
+  return ss(THREE.MathUtils.clamp((time-.3)/(duration-.5),0,1),0,1);
+}
+export const valveRotation = (time,duration=4) => workProgress(time,duration)*duration*2;
+
+// Keep a world-space work frame during withdrawal, so turning the camera cannot
+// drag a planted palm away from its mechanism. Both hands use the same envelope.
+export class WorkTransition{
+  constructor(){this.reset();}
+  reset(){this.frame=null;this.weight=0;this.progress=0;}
+  update(frame,camInv,dt){
+    this.progress=THREE.MathUtils.clamp(this.progress+(frame?dt/.26:-dt/.3),0,1);
+    this.weight=ss(this.progress,0,1);
+    if(frame)this.frame={...frame,target:frame.target.clone(),normal:frame.normal?.clone()};
+    else if(this.progress===0)this.frame=null;
+    return {pose:this.frame?sampleWork(this.frame,camInv):null,weight:this.weight};
+  }
+}
+
+function rimGrip(target,normal,up,angle,sign){
+  const side=up.clone().cross(normal).normalize(),step=2.1,active=.6;
+  const cycle=angle+(sign>0?step*.5:0),phase=((cycle%step)+step)%step/step;
+  const returning=phase>active,returnT=ss(phase,active,1);
+  const stroke=returning?step*active*(1-returnT):phase*step;
+  const theta=(sign<0?-Math.PI/2-.5:Math.PI/2-.5)+stroke;
+  const radial=side.clone().multiplyScalar(Math.sin(theta)).addScaledVector(up,Math.cos(theta));
+  const tangent=side.clone().multiplyScalar(Math.cos(theta)).addScaledVector(up,-Math.sin(theta));
+  const lift=returning?Math.sin(returnT*Math.PI)*.075:0;
+  const point=target.clone().addScaledVector(radial,.2).addScaledVector(normal,lift);
+  const localAxis=CANE_AXIS.clone().negate();if(sign<0)localAxis.x*=-1;
+  const localFore=V(0,0,1).addScaledVector(localAxis,-localAxis.z).normalize();
+  const local=new THREE.Matrix4().makeBasis(localAxis,localFore,localAxis.clone().cross(localFore)).invert();
+  const fore=normal.clone().addScaledVector(tangent,-normal.dot(tangent)).normalize();
+  const q=new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(tangent,fore,tangent.clone().cross(fore)).multiply(local));
+  return {...wrist(point,q,returning?'relaxed':'grip'),contact:!returning};
+}
 
 // Authored first-person keyframes. Props and palms are sampled from the same
 // transform, so an object cannot move ahead of the fingers holding it.
 export function sampleWork(frame,camInv){
-  const {kind,k}=frame, target=frame.target.clone().applyMatrix4(camInv);
+  const {kind,k}=frame, target=(frame.anchor?frame.anchor.getWorldPosition(V(0,0,0)):frame.target.clone()).applyMatrix4(camInv);
   const normal=(frame.normal||V(0,0,1)).clone().transformDirection(camInv);
   const up=V(0,1,0).transformDirection(camInv);
   if(kind==='pryLift'){
     const side=up.clone().cross(normal).normalize(),spread=.035+k*.72;
     const palms=[-1,1].map(sign=>{
-      const q=handQ(up.clone(),normal.clone());
-      return wrist(target.clone().addScaledVector(side,sign*spread).addScaledVector(normal,.045),q,k<.04?'edge':'flat');
+      // Fingers curl around the inner vertical edge, thumbs above the seam.
+      const q=handQ(side.clone().multiplyScalar(-sign),normal);
+      return {...wrist(target.clone().addScaledVector(side,sign*spread).addScaledVector(normal,.02),q,'edge'),contact:true};
     });
     return {left:palms[0],right:palms[1],stage:'створки'};
   }
   if(kind==='caveValve'){
-    const side=up.clone().cross(normal).normalize();
-    const q=handQ(up.clone(),normal.clone());
-    const angle=valveRotation(frame.time);
-    const at=target.clone().addScaledVector(side,Math.sin(angle)*.2).addScaledVector(up,Math.cos(angle)*.2);
-    return {left:wrist(at,q,'handle'),right:wrist(target.clone().addScaledVector(side,.22),q,'flat'),stage:'контур'};
+    const angle=frame.rotor?.rotation.z??frame.angle??valveRotation(frame.time,frame.duration||4);
+    const left=rimGrip(target,normal,up,angle,-1),right=rimGrip(target,normal,up,angle,1);
+    return {left,right,stage:left.contact&&right.contact?'поворот':'перехват'};
+  }
+  if(kind==='caveDial'){
+    const angle=frame.rotor?.rotation.z??frame.angle??workProgress(frame.time,3)*2.4,step=.8;
+    const phase=((angle%step)+step)%step/step,returning=phase>.75;
+    const back=ss(phase,.75,1),twist=returning?step*.75*(1-back):phase*step;
+    const q=handQ(up.clone(),normal.clone()).premultiply(qAxis(normal,twist));
+    const point=target.clone().addScaledVector(normal,.025+(returning?Math.sin(back*Math.PI)*.045:0));
+    return {left:{...wrist(point,q,returning?'relaxed':'fuseGrip'),contact:!returning},stage:returning?'перехват':'настройка'};
   }
   if(kind==='unscrew'||kind==='pickupFuse'){
     const mounted=kind==='unscrew',gripAt=mounted?.22:.34,pullAt=mounted?.64:.4;
@@ -71,17 +115,17 @@ export function sampleWork(frame,camInv){
     let right;
     const capAway=kind==='uncap'?ss(k,.55,.9):kind==='recap'?1-ss(k,.1,.5):1;
     const capP=spout.clone().addScaledVector(V(.65,.76,0).normalize(),capAway*.075).applyQuaternion(q).add(p);
+    const capAxis=V(.65,.76,0).normalize(),capTurn=kind==='uncap'?ss(k,.28,.62)*1.6:kind==='recap'?(1-ss(k,.28,.62))*1.6:1.6;
     if(!pouring){
-      const twist=(kind==='uncap'?1:-1)*ss(k,.28,.62)*1.6;
-      const rq=q.clone().multiply(handQ(V(-.85,.1,-.2),V(.1,.4,1))).multiply(qAxis(V(0,0,1),twist));
+      const rq=q.clone().multiply(qAxis(capAxis,capTurn)).multiply(handQ(V(-.85,.1,-.2),V(.1,.4,1)));
       right=wrist(capP,rq,'fuseGrip');
     }else{
-      const capQ=q.clone().multiply(handQ(V(-.85,.1,-.2),V(.1,.4,1))).multiply(qAxis(V(0,0,1),1.6*(1-ss(k,.6,.85))));
+      const capQ=q.clone().multiply(qAxis(capAxis,1.6)).multiply(handQ(V(-.85,.1,-.2),V(.1,.4,1)));
       const rq=capQ.slerp(q.clone().multiply(handQ(V(-.15,0,-1),V(0,1,.1))),tilt);
       const anchor=spout.clone().addScaledVector(V(.65,.76,0).normalize(),.075).lerp(V(0,.17,0),tilt);
       right=wrist(anchor.applyQuaternion(q).add(p),rq,'handle');
     }
-    return {left,right,can:{pos:p,q,capAway,capVisible:!pouring,flow:pouring?ss(k,.2,.28)*(1-ss(k,.78,.86)):0,end:target},stage:kind};
+    return {left,right,can:{pos:p,q,capAway,capTurn,capVisible:!pouring,flow:pouring?ss(k,.2,.28)*(1-ss(k,.78,.86)):0,end:target},stage:kind};
   }
   if(kind==='prime'){
     const q=new THREE.Quaternion().setFromUnitVectors(V(1,0,0),V(1,0,0).transformDirection(camInv));

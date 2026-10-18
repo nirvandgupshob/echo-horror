@@ -64,7 +64,7 @@ const path = require('node:path');
     g.chapter.root.traverse(o=>{
       if(!o.isMesh)return;
       for(const m of Array.isArray(o.material)?o.material:[o.material]){
-        if(m.isMeshBasicMaterial&&m.color?.getHex()!==0||m.uniforms?.uLit?.value>0)luminous.push(o.uuid);
+        if(m.isMeshBasicMaterial&&!m.uniforms?.uPat&&m.color?.getHex()!==0||m.uniforms?.uLit?.value>0)luminous.push(o.uuid);
       }
     });
     const maps=new Set(Object.values(g.caveLevel.mat).map(m=>m.uniforms?.uTex?.value?.image?.src).filter(src=>src?.includes('/tex/cave/')));
@@ -77,7 +77,7 @@ const path = require('node:path');
       const g=window.__game,p=g.player,s=g.chapter.sequence,spots=g.caveLevel.items.filter(it=>it.type==='locker'&&it.low);
       window.__freeze=true;window.requestAnimationFrame=()=>0;
       s.phase='explore';s.opening=1;s.drained=false;g.chapter.applyState();g.chapter.spawned=true;g.monster.despawn();
-      if(spots.length!==3||spots.some(it=>it.inside.y!==0))throw new Error('Suspended or wall beds became hiding places');
+      if(spots.length!==4||spots.some(it=>it.inside.y!==0))throw new Error('Suspended or wall beds became hiding places');
       const press=()=>{window.dispatchEvent(new KeyboardEvent('keydown',{code:'KeyE'}));window.dispatchEvent(new KeyboardEvent('keyup',{code:'KeyE'}));};
       const results=[];
       for(const it of spots){
@@ -103,7 +103,8 @@ const path = require('node:path');
       g.monster.stateT=1.5;g.monster.suspicion=.9;p.keys.delete('KeyQ');g.tick(10);
       if(g.monster.state!=='windup')throw new Error('A nearby suspicious monster cannot detect breathing under a cave bed');
       g.monster.despawn();press();g.tick(40);g.step(0);
-      return {spots:results,suspendedBeds:g.caveLevel.modelCounts['suspended-bed'],wallBedsExcluded:true,monsterHearsBreathing:true};
+      if(g.caveLevel.modelCounts['hanging-miner']!==9||g.caveLevel.modelCounts['suspended-bed'])throw new Error('Hanging miners replaced incorrectly');
+      return {spots:results,hangingMiners:g.caveLevel.modelCounts['hanging-miner'],monsterHearsBreathing:true};
     });
     console.log('caveBeds',JSON.stringify(beds));
     await page.screenshot({path:'artifacts/11-cave-beds.png'});
@@ -111,24 +112,32 @@ const path = require('node:path');
     await browser.close();console.log('Hospital and cave bed hiding, safe exits, look, breathing and suspended-bed exclusion passed.');return;
   }
   if(process.env.VALVE_ONLY){
-    const valve=await page.evaluate(()=>{
+    const valve=await page.evaluate(async()=>{
+      const {sampleWork}=await import('/src/work-motion.js');
       const g=window.__game,s=g.chapter.sequence,p=g.player,wheel=g.caveLevel.valve;
       window.__freeze=true;window.requestAnimationFrame=()=>0;
       s.phase='explore';s.opening=1;s.drained=false;s.action=0;s.actionId=null;
       g.chapter.applyState();g.chapter.spawned=true;
       p.reset({x:13.5,z:25.5},Math.PI);g.tick(2);p.keys.add('KeyE');
-      let samples=0,lastAngle=wheel.rotation.z,maxSlip=0,finalStep=0;
-      for(let n=0;n<250;n++){
+      let samples=0,lastAngle=wheel.rotation.z,maxSlip=0,finalStep=0,previous={};
+      for(let n=0;n<340;n++){
         g.tick(1);
-        const turn=wheel.rotation.z-lastAngle;
-        if(turn< -1e-7||turn>2/60+1e-7)throw new Error('Valve reversed or jumped away from the hand');
+        const turn=wheel.rotation.z-lastAngle;lastAngle=wheel.rotation.z;
+        if(turn< -1e-7||turn>3.5/60+1e-7)throw new Error('Valve reversed or jumped away from the hand');
         if(s.drained){finalStep=turn;break;}
-        if(g.vm.work?.kind!=='caveValve')throw new Error('Valve action lost its hand animation');
-        const palm=g.vm.left.localToWorld(p.pos.clone().set(0,-.031,-.068));
-        const rim=wheel.localToWorld(p.pos.clone().set(0,.2,0));
-        const slip=palm.distanceTo(rim);maxSlip=Math.max(maxSlip,slip);
-        if(slip>1e-5)throw new Error(`Hand rotates against the valve: ${slip}m slip`);
-        lastAngle=wheel.rotation.z;samples++;
+        if(!g.vm.work){if(s.action>0)throw new Error('Valve action lost its hand animation');continue;}
+        if(g.vm.workK<1)continue;
+        g.vm.root.updateMatrixWorld(true);wheel.updateMatrixWorld(true);
+        const pose=sampleWork(g.vm.work,g.vm.root.matrixWorld.clone().invert());
+        for(const key of ['left','right']){
+          const palm=wheel.worldToLocal(g.vm[key].localToWorld(p.pos.clone().set(0,-.031,-.068)));
+          const slip=Math.max(Math.abs(Math.hypot(palm.x,palm.y)-.2),pose[key].contact?Math.abs(palm.z):0);
+          maxSlip=Math.max(maxSlip,slip);
+          if(slip>1e-5)throw new Error(`Hand missed the valve rim: ${slip}m`);
+          if(pose[key].contact&&previous[key]?.contact&&palm.distanceTo(previous[key].palm)>1e-5)throw new Error('Planted hand slid over the rotating wheel');
+          previous[key]={palm,contact:pose[key].contact};
+        }
+        samples++;
       }
       p.keys.clear();g.tick(10);
       if(!s.drained||Math.abs(wheel.rotation.z-8)>1e-7)throw new Error('Valve lost its final orientation');
@@ -166,7 +175,7 @@ const path = require('node:path');
       p.keys.clear();g.tick(1);
       const freeYaw=p.yaw;p.look(80,0,.002);
       if(p.frozen||p.yaw===freeYaw||p.lookTarget)throw new Error('Releasing E did not restore look controls');
-      p.keys.add('KeyE');g.tick(240);p.keys.clear();
+      p.keys.add('KeyE');g.tick(330);p.keys.clear();
       if(s.phase!=='explore'||p.frozen||s.opening!==1)throw new Error('Original doors no longer open fully');
       p.keys.add('KeyW');g.tick(100);p.keys.clear();
       if(p.pos.z<9.5)throw new Error('Cannot exit after manual opening');
@@ -189,7 +198,7 @@ const path = require('node:path');
   });
   console.log('opening',JSON.stringify(opening));
   await page.screenshot({path:'artifacts/02-hands.png'});
-  console.log('opened',await page.evaluate(()=>{const g=window.__game;g.step(145);g.player.keys.clear();return render_game_to_text();}));
+  console.log('opened',await page.evaluate(()=>{const g=window.__game;g.step(200);g.player.keys.clear();return render_game_to_text();}));
   // Walk out using the actual player collision controller.
   const walked=await page.evaluate(()=>{
     const g=window.__game;g.player.keys.add('KeyW');g.step(100);g.player.keys.clear();
@@ -301,7 +310,7 @@ const path = require('node:path');
   const complete=await page.evaluate(()=>{
     const g=window.__game, result=[];
     g.monster.despawn();g.chapter.spawned=true;
-    for(const [id,duration]of [['valve',250],['resonator',190],['exit',130]]){
+    for(const [id,duration]of [['valve',320],['resonator',260],['exit',200]]){
       const station=g.caveLevel.stationItems.find(it=>it.id===id),path=g.caveLevel.findPath(g.player.pos,station.pos);
       if(!path?.length)throw new Error(`No movement route to ${id}`);
       let frames=0;

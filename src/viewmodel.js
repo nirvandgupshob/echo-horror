@@ -10,7 +10,8 @@ import { taper } from './organic.js';
 import { gripInfo } from './hands.js';
 import { HandRig } from './hand-rig.js';
 import { HandContact } from './hand-contact.js';
-import { sampleWork } from './work-motion.js';
+import { createFlashlightModel } from './flashlight.js';
+import { WorkTransition } from './work-motion.js';
 import { createFuelCan, createFuse, workMaterials } from './work-props.js';
 import { Legs } from './legs.js';
 
@@ -129,6 +130,12 @@ export class ViewModel {
     this.rightUpper = upper();
     this.leftUpper = upper();
     const workMats = workMaterials(true);
+    this.torch=createFlashlightModel(true);this.torch.visible=false;this.root.add(this.torch);
+    this.mats.push(...this.torch.userData.materials);
+    const torchGI=gripInfo(.029);this.torchCurl=torchGI.curl;
+    this.torchGrip=torchGI.p.clone();this.torchGrip.x*=-1;
+    const axis=torchGI.axis.clone();axis.x*=-1;const foreAxis=V(0,0,1).addScaledVector(axis,-axis.z).normalize();
+    this.torchFrameInv=new THREE.Matrix4().makeBasis(axis,foreAxis,new THREE.Vector3().crossVectors(axis,foreAxis)).invert();
     this.workCan = createFuelCan(workMats);
     this.workFuse = createFuse(workMats);
     this.root.add(this.workCan, this.workFuse);
@@ -183,7 +190,7 @@ export class ViewModel {
     this.leftW = 0;
     this.lastSteps = 0;
     this.sweepPh = 0;
-    this.t = 0;
+    this.t = 0;this.workTransition=new WorkTransition();
   }
 
   tap() {
@@ -290,7 +297,7 @@ export class ViewModel {
   }
 
   showLeft(pose) {
-    this.leftHand.setPose(pose, this.handDt || 1 / 60);
+    this.leftHand.setPose(pose, this.handDt || 1 / 60,this.torch.visible&&pose==='grip'?this.torchCurl:null);
   }
 
   update(dt, camera, player) {
@@ -299,7 +306,7 @@ export class ViewModel {
     this.handDt = dt;
     if (!this.contactSolver) this.contactSolver = new HandContact(player.level);
     if (this.lastPosition && this.lastPosition.distanceToSquared(player.pos) > 4) {
-      this.leftW = this.touchK = 0;
+      this.leftW = this.touchK = 0;this.workTransition.reset();
       this.lastContact = this.contactSolver.last = null;
       this.leftPos = null;
       this.leftSpring.init = false;
@@ -385,8 +392,9 @@ export class ViewModel {
     hand.y -= retract * 0.045;
     hand.add(body);
     const camInv = new THREE.Matrix4().copy(this.root.matrixWorld).invert();
-    const work = this.work ? sampleWork(this.work,camInv) : null;
-    this.workK = lerp(this.workK || 0,work?1:0,1-Math.exp(-dt*12));
+    if(player.hidden||player.pitFall)this.workTransition.reset();
+    const transition=this.workTransition.update(player.hidden||player.pitFall?null:this.work,camInv,dt),work=transition.pose;
+    this.workK=transition.weight;
     hand.y -= this.workK * 0.4;
     // Resting arms follow the torso's yaw. Looking down must not pull the
     // wrist into the chest or turn the sleeve through the other hand.
@@ -394,11 +402,12 @@ export class ViewModel {
     this.right.position.copy(hand);
     // the floor point the tip goes for: on the ground ahead, at cane's length
     const handW = hand.clone().applyMatrix4(this.root.matrixWorld);
-    const tipY = 0.03 + arcLift + tapLift * 1.1 + this.runK * 0.25;
+    const tipY = player.pos.y + 0.03 + arcLift + tapLift * 1.1 + this.runK * 0.25;
     const h = Math.max(0.3, handW.y - tipY);
     const reachH = Math.sqrt(Math.max(0.2, CANE_L * CANE_L - h * h)) * (1 - this.runK * 0.12);
     const ang = player.yaw + sweep + 0.05 + sw.x * 0.5;
     const tipW = V(handW.x - Math.sin(ang) * reachH, tipY, handW.z - Math.cos(ang) * reachH);
+    tipW.y+=(player.level.floorHeightAt?.(tipW.x,tipW.z)||0)-player.pos.y;
     // don't let it swing up into the view when looking down at your feet
     const tipC = tipW.clone().applyMatrix4(camInv);
     if (tipC.z > -0.35) tipC.z = -0.35;
@@ -406,22 +415,24 @@ export class ViewModel {
     // hand, the cane axis and the forearm; in view, where the cane must point and
     // where the forearm should run (back to the lower right corner)
     const dirC = tipC.clone().sub(hand).normalize();
-    const elbow = (side) => V(side * 0.3, Math.max(0.2, Math.min(player.eye, 1.65) - 0.6 + (player.actionLean || 0)), 0.12).applyAxisAngle(V(0, 1, 0), player.yaw).add(V(player.pos.x, 0, player.pos.z)).applyMatrix4(camInv);
+    const elbow = (side) => V(side * 0.3, Math.max(0.2, Math.min(player.eye, 1.65) - 0.6 + (player.actionLean || 0)), 0.12).applyAxisAngle(V(0, 1, 0), player.yaw).add(V(player.pos.x, player.pos.y, player.pos.z)).applyMatrix4(camInv);
     const fore = elbow(1).sub(hand).normalize();
     const b1 = dirC, b2 = fore.addScaledVector(b1, -fore.dot(b1)).normalize(), b3 = new THREE.Vector3().crossVectors(b1, b2);
     const B = new THREE.Matrix4().makeBasis(b1, b2, b3);
     this.right.quaternion.setFromRotationMatrix(B.multiply(this.handFrameInv));
-    this.rightHand.setPose('grip', dt);
+
     const gripC = this.gripLocal.clone().applyQuaternion(this.right.quaternion).add(hand);
     const caneDir = tipC.sub(gripC).normalize();
     this.cane.position.copy(gripC);
     this.cane.quaternion.setFromUnitVectors(V(0, -1, 0), caneDir);
-    this.cane.visible = this.workK < 0.85;
+    this.cane.position.y-=this.workK*.4;
+    this.cane.visible = this.workK < .2;
     if (work?.right) {
       this.right.position.lerp(work.right.pos,this.workK);
       this.right.quaternion.slerp(work.right.q,this.workK);
-      this.rightHand.setPose(work.right.pose,dt);
+
     }
+    this.rightHand.setPose(work?.right&&this.workK>.45?work.right.pose:'grip',dt);
     this.workCan.visible = !!work?.can;
     this.workFuse.visible = !!work?.fuse?.visible;
     this.fuelStream.visible = !!work?.can?.flow;
@@ -431,7 +442,7 @@ export class ViewModel {
       this.workCan.position.copy(c.pos);this.workCan.quaternion.copy(c.q);
       this.workCan.cap.visible=c.capVisible;
       this.workCan.cap.position.copy(this.workCan.capHome).addScaledVector(this.workCan.capAxis,c.capAway*.075);
-      this.workCan.cap.rotateY(dt*7);
+      this.workCan.cap.quaternion.copy(this.workCan.capHomeQ).premultiply(new THREE.Quaternion().setFromAxisAngle(this.workCan.capAxis,c.capTurn));
       const start=this.workCan.spout.position.clone().applyQuaternion(c.q).add(c.pos);
       const point=(t)=>start.clone().lerp(c.end,t).add(V(Math.sin(t*8+this.t*13)*Math.sin(t*Math.PI)*.003*c.flow,-Math.sin(t*Math.PI)*.018,0));
       this.fuelStream.children.forEach((o,i)=>{const a=point(i/9),b=point((i+1)/9),d=b.clone().sub(a);o.position.copy(a).add(b).multiplyScalar(.5);o.quaternion.setFromUnitVectors(V(0,1,0),d.clone().normalize());o.scale.set(c.flow,d.length(),c.flow);});
@@ -441,20 +452,19 @@ export class ViewModel {
     if (this.actT > 0) this.actT = Math.max(0, this.actT - dt);
     if (this.throwT > 0) this.throwT = Math.max(0, this.throwT - dt);
     const wd = this.wallDist ?? 9;
-    const wall = !!this.contact && !work && !player.holding && !player.listening && this.actT <= 0 && this.throwT <= 0;
+    const wall = !!this.contact && !this.flashlight?.owned && !work && !player.holding && !player.listening && this.actT <= 0 && this.throwT <= 0;
     this.touchK = lerp(this.touchK || 0, wall ? 1 : 0, Math.min(1, dt * 5));
     if (wall && this.touchK > 0.65 && this.contact.normal.y < 0.5) player.braceContact = this.contact;
 
     let pose = null, pos = null, fingers = null, back = null;
+    let torchPose=false;this.torch.visible=false;
     if (player.fallT > 0) {
       pose = 'open';
       const height = lerp(Math.max(0.16, player.eye - 0.35), 0.16, player.fallK);
       pos = V(-0.28, height, -0.32).applyAxisAngle(V(0, 1, 0), player.yaw).add(player.pos).applyMatrix4(camInv);
       fingers = V(0, -0.15, -1).applyAxisAngle(V(0, 1, 0), player.yaw).transformDirection(camInv);
       back = V(0, 1, 0).transformDirection(camInv);
-    } else if (work?.left) {
-      pose=work.left.pose;pos=work.left.pos;
-      this.leftQ.copy(work.left.q);
+
     } else if (this.throwT > 0) {
       // underarm lob: from low behind to out in front, fingers opening at release
       const k = 1 - this.throwT / 0.45;
@@ -478,6 +488,16 @@ export class ViewModel {
       fingers = V(0.15, 1, 0.1);
       back = V(-1, 0, 0.35);
       pose = 'cover';
+    } else if(this.flashlight?.owned&&!player.hidden){
+      torchPose=true;pose='grip';
+      const phase=this.flashlight.phase/.46*Math.PI*2,shake=this.flashlight.shaking?Math.sin(phase):0;
+      const center=V(-.27+sw.x*.3,-.31+breath+shake*.035,-.47+shake*.06+retract*.12).applyAxisAngle(V(0,1,0),player.yaw).add(camera.position).applyMatrix4(camInv);
+      center.lerp(V(-.26+sw.x*.3,-.3+breath+shake*.035,-.48+shake*.06+retract*.12),.65);
+      const axis=V(.08+shake*.12,.02+shake*.15,-1).normalize();
+      const fore=V(0,-.9,.25);fore.addScaledVector(axis,-fore.dot(axis)).normalize();
+      const q=new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(axis,fore,new THREE.Vector3().crossVectors(axis,fore)).multiply(this.torchFrameInv));
+      pos=center.clone().sub(this.torchGrip.clone().applyQuaternion(q));this.leftQ.copy(q);
+      this.torch.position.copy(center);this.torch.quaternion.setFromUnitVectors(V(0,0,-1),axis);this.torch.visible=true;
     } else if (this.touchK > 0.05) {
       const contact = this.contact || this.lastContact;
       if (contact) {
@@ -505,12 +525,21 @@ export class ViewModel {
       back = V(-0.15, 0.25, 1);
       pose = 'open';
     }
+    if(work?.left){
+      const baseQ=torchPose?this.leftQ.clone():fingers?handQuat(fingers,back):this.left.quaternion.clone();
+      pos=(pos||V(-.24,-.48,-.24)).clone().lerp(work.left.pos,this.workK);
+      this.leftQ.copy(baseQ).slerp(work.left.q,this.workK);
+      pose=this.workK>.45?work.left.pose:pose||'open';
+      // The torch is lowered before grasping, and comes back with the hand.
+      this.torch.position.y-=this.workK*.45;this.torch.visible=this.torch.visible&&this.workK<.2;
+      torchPose=false;
+    }
     const want = pose ? 1 : 0;
     this.leftW = lerp(this.leftW, want, Math.min(1, dt * (want ? 9 : 5)));
     if (pose) {
       this.leftPose = pose;
       this.leftPos = pos;
-      if (!work) this.leftQ.slerp(handQuat(fingers, back), this.leftW < 0.1 ? 1 : Math.min(1, dt * 14));
+      if (!work&&!torchPose) this.leftQ.slerp(handQuat(fingers, back), this.leftW < 0.1 ? 1 : Math.min(1, dt * 14));
     }
     let heldKey = null;
     if (this.actT > 0) {
@@ -530,7 +559,7 @@ export class ViewModel {
         this.leftSpring.x.copy(target);
         this.leftSpring.init = true;
       }
-      if (work) {this.left.position.copy(pos);this.leftSpring.x.copy(pos);this.leftSpring.v.set(0,0,0);}
+      if (work||torchPose) {this.left.position.copy(pos);this.leftSpring.x.copy(pos);this.leftSpring.v.set(0,0,0);}
       else this.left.position.copy(this.leftSpring.step(target, dt));
       this.left.quaternion.copy(this.leftQ);
     } else this.leftSpring.init = false;
@@ -556,7 +585,16 @@ export class ViewModel {
     // Fit each sleeve to its actual elbow. A fixed 66 cm tube continued past
     // the elbow and crossed the camera/other wrist on close reaches.
     const fitArm = (wrist, sleeve, rig, side) => {
-      const elbowC = elbow(side);
+      const shoulder = V(side * 0.19, player.eye - 0.2 + (player.actionLean || 0), 0.13).applyAxisAngle(V(0, 1, 0), player.yaw).add(V(player.pos.x, player.pos.y, player.pos.z)).applyMatrix4(camInv);
+      const elbowC=elbow(side);
+      if(this.workK>0){
+        const axis=wrist.position.clone().sub(shoulder),distance=Math.max(.001,axis.length());axis.divideScalar(distance);
+        const stretch=Math.max(1,distance/.76),upper=.34*stretch,fore=.42*stretch;
+        const along=(distance*distance+upper*upper-fore*fore)/(2*distance),height=Math.sqrt(Math.max(0,upper*upper-along*along));
+        const pole=elbowC.clone().sub(shoulder);pole.addScaledVector(axis,-pole.dot(axis)).normalize();
+        const joint=shoulder.clone().addScaledVector(axis,along).addScaledVector(pole,height);
+        elbowC.lerp(joint,this.workK);
+      }
       const toElbow = elbowC.clone().sub(wrist.position).applyQuaternion(wrist.quaternion.clone().invert());
       const distance = toElbow.length();
       toElbow.normalize();
@@ -570,7 +608,6 @@ export class ViewModel {
       sleeve.scale.z = clamp(distance / 0.5, 0.35, 1.4);
       sleeve.cuff.scale.z = 1 / sleeve.scale.z;
       const upper = side > 0 ? this.rightUpper : this.leftUpper;
-      const shoulder = V(side * 0.19, player.eye - 0.2 + (player.actionLean || 0), 0.13).applyAxisAngle(V(0, 1, 0), player.yaw).add(V(player.pos.x, 0, player.pos.z)).applyMatrix4(camInv);
       const toShoulder = shoulder.sub(elbowC);
       upper.position.copy(elbowC);
       upper.quaternion.setFromUnitVectors(V(0, 0, 1), toShoulder.clone().normalize());

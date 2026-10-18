@@ -74,7 +74,7 @@ export class Player {
     if (!this.fallImpact && age >= 0.32) {
       this.fallImpact = true;
       const surface = this.level.floorAt(this.pos.x, this.pos.z);
-      const position = this.pos.clone().setY(0.15);
+      const position = this.pos.clone().setY(this.pos.y+0.15);
       this.audio.bodyFall(position, surface);
       this.game.noise(position, { radius: 12 * (SURF_MUL[surface] || 1), visual: 8, source: 'player', kind: 'fall', color: COLORS.player, strength: 1.1, speed: 11 });
       this.shake = Math.max(this.shake || 0, 0.65);
@@ -86,7 +86,7 @@ export class Player {
     this.pitFall = null;
     this.touchMove = { x: 0, y: 0 };
     this.braceContact = null;
-    this.pos.set(pos.x, 0, pos.z);
+    this.pos.set(pos.x, this.level.floorHeightAt?.(pos.x,pos.z)||0, pos.z);
     this.yaw = yaw;
     this.pitch = 0;
     this.stamina = 1;
@@ -102,7 +102,7 @@ export class Player {
     this.clickQuietT = 0;
     this.clearFall();
     this.eye = 1.65;
-    this.camera.position.set(this.pos.x, this.eye, this.pos.z);
+    this.camera.position.set(this.pos.x, this.pos.y+this.eye, this.pos.z);
     this.camera.rotation.set(0, yaw, 0, 'YXZ');
     for (const p of this.projectiles) p.mesh.removeFromParent();
     this.projectiles = [];
@@ -176,9 +176,9 @@ export class Player {
     // Keep the falling body inside the shaft instead of drifting through its lip.
     const x = this.pos.x + drift.x, z = this.pos.z + drift.z;
     if (this.level.isPit(x, z)) { this.pos.x = x; this.pos.z = z; }
-    this.pos.y = f.y;
+    this.pos.y = (this.pitGround||0)+f.y;
     this.vel.set(0, f.vy, 0);
-    this.camera.position.set(this.pos.x, this.eye + f.y, this.pos.z);
+    this.camera.position.set(this.pos.x, this.eye + this.pos.y, this.pos.z);
     const pitch = THREE.MathUtils.lerp(this.pitch, -0.85, 1 - Math.exp(-f.time * 3));
     this.camera.rotation.set(pitch, this.yaw, Math.sin(f.time * 7) * 0.08, 'YXZ');
     this.headOffset?.set(0, 0, 0);
@@ -209,7 +209,8 @@ export class Player {
     this.running = this.moving && (k.has('ShiftLeft') || k.has('ShiftRight')) && this.stamina > 0.05 && !this.crouch;
     if (this.moving) want.normalize().applyAxisAngle(new THREE.Vector3(0, 1, 0), this.yaw);
     const speed = this.crouch ? 1.25 : this.running ? 4.4 : 2.3;
-    this.vel.lerp(want.multiplyScalar(speed * analog), Math.min(1, dt * 10));
+    if(this.moving)this.vel.lerp(want.multiplyScalar(speed * analog), Math.min(1, dt * 10));
+    else this.vel.set(0,0,0);
 
     const before = this.pos.clone();
     this.pos.addScaledVector(this.vel, dt);
@@ -219,16 +220,18 @@ export class Player {
     }
     if (!this.hidden) (this.level.collidePlayer || this.level.collide).call(this.level, this.pos, 0.3);
     if (!this.hidden && this.game.state === 'play' && this.level.isPit?.(this.pos.x, this.pos.z)) {
+      this.pitGround=this.pos.y;
       this.pitFall = new PitFall(this.vel.x, this.vel.z);
       this.frozen = true;
       this.holding = this.listening = this.running = this.moving = false;
       this.lookTarget = null;
       this.clearFall();
       this.audio.gasp();
-      this.game.noise(this.pos.clone().setY(this.eye), { radius: 7, visual: 9, source: 'player', kind: 'gasp', color: COLORS.breath, strength: 0.7, speed: 13 });
+      this.game.noise(this.pos.clone().setY(this.pos.y+this.eye), { radius: 7, visual: 9, source: 'player', kind: 'gasp', color: COLORS.breath, strength: 0.7, speed: 13 });
       this.updatePitFall(dt);
       return;
     }
+    this.pos.y=this.level.floorHeightAt?.(this.pos.x,this.pos.z)||0;
     const moved = Math.hypot(this.pos.x - before.x, this.pos.z - before.z);
     this.runDistance = this.running && this.fallT <= 0 ? this.runDistance + moved : 0;
 
@@ -291,7 +294,7 @@ export class Player {
 
     // camera: a body, not a dolly. Spring-damped head that takes a kick on
     // every footfall, sways with breathing, and shakes when something heavy walks near.
-    const lowCeil = this.level.ceilAt(Math.floor(this.pos.x), Math.floor(this.pos.z)) < 1.7;
+    const lowCeil = (this.level.headroomAt?.(this.pos.x,this.pos.z)??this.level.ceilAt(Math.floor(this.pos.x), Math.floor(this.pos.z))) < 1.7;
     if (lowCeil) this.crouch = true;
     const standingEye = this.hidden && this.hidden.low ? 0.27 : this.crouch ? 1.0 : 1.65;
     const targetEye = Math.max(0.25, standingEye - this.fallK * 1.36);
@@ -348,7 +351,7 @@ export class Player {
     const trem = fear * fear * 0.0022 + (this.holding ? MU.smoothstep(this.holdT, 4, 9) * 0.0028 : 0);
     const trX = sn(T * 13, 7) * trem, trY = sn(T * 15, 9) * trem;
     const fx = -Math.sin(this.yaw), fz = -Math.cos(this.yaw);
-    this.camera.position.set(this.pos.x + fx * breathZ, this.eye + this.headY + breathY + gaitY + shY + trY, this.pos.z + fz * breathZ);
+    this.camera.position.set(this.pos.x + fx * breathZ, this.pos.y + this.eye + this.headY + breathY + gaitY + shY + trY, this.pos.z + fz * breathZ);
     this.camera.position.x += fx * this.fallK * 0.12;
     this.camera.position.z += fz * this.fallK * 0.12;
     const side = gaitX + shX + trX;
@@ -434,8 +437,9 @@ export class Player {
       m.rotation.x += dt * 9;
       m.rotation.z += dt * 7;
       const c = m.position;
-      const room = this.level.open(Math.floor(c.x), Math.floor(c.z));
-      const ceil = room ? this.level.ceilAt(Math.floor(c.x), Math.floor(c.z)) : 0;
+      const room = this.level.navigationOpen?.(c.x,c.z)??this.level.open(Math.floor(c.x), Math.floor(c.z));
+      const floor=this.level.floorHeightAt?.(c.x,c.z)||0;
+      const ceil = room ? (this.level.roofAt?.(c.x,c.z)??this.level.ceilAt(Math.floor(c.x), Math.floor(c.z))) : 0;
       let hit = false;
       if (!room || c.y >= ceil) {
         // bounce off wall/ceiling
@@ -445,13 +449,13 @@ export class Player {
           p.vel.z *= -0.35;
         } else p.vel.y *= -0.3;
         hit = true;
-      } else if (c.y <= 0.06) {
-        c.y = 0.06;
+      } else if (c.y <= floor+0.06) {
+        c.y = floor+0.06;
         p.vel.y *= -0.3;
         p.vel.x *= 0.5;
         p.vel.z *= 0.5;
         hit = true;
-      } else if (c.y < 1.4 && this.level.blockedPoint(c.x, c.z, 0.05)) {
+      } else if (c.y < floor+1.4 && this.level.blockedPoint(c.x, c.z, 0.05)) {
         m.position.copy(prev);
         p.vel.x *= -0.3;
         p.vel.z *= -0.3;

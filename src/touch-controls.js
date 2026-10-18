@@ -1,11 +1,14 @@
 // Pointer capture keeps each thumb independent: moving, looking and holding E
 // can overlap. Every exit path releases held keys, including interrupted touches.
-export function createTouchControls({player,game,look,pause,closeNote,throwItem,siege,mapPoint}) {
+import {freshInput} from './input.js';
+export function createTouchControls({player,game,look,pause,closeNote,throwItem,siege,mapPoint,flashlight}) {
   const root=document.getElementById('touch-controls');
   const rotate=document.getElementById('rotate-device');
   const coarse=matchMedia('(pointer: coarse)');
   let enabled=coarse.matches,mode='',stickId=null,lookId=null,lastLook=null;
   const symbols={
+    KeyT:'M5 5h5l3 5v9H2v-9l3-5M13 8l6-3M14 12h8M13 16l6 3',
+    KeyR:'M8 4l-3 4 3 4M5 8h5M16 12l3 4-3 4M19 16h-5M11 4l3 16',
     KeyF:'M6 3l10 15M5 3h3M15 18l3 3M9 19l-2 2M18 13l3-1',
     KeyE:'M8 20V10a2 2 0 014 0v3-8a2 2 0 014 0v9l2-3a2 2 0 013 2l-3 7H8l-4-7a2 2 0 013-2l1 1',
     KeyQ:'M11 3v7L8 7C5 7 3 12 3 17s6 5 8 1M13 3v7l3-3c3 0 5 5 5 10s-6 5-8 1M8 21L20 3',
@@ -46,6 +49,7 @@ export function createTouchControls({player,game,look,pause,closeNote,throwItem,
   };
   document.addEventListener('pointerdown',e=>{
     if(!enabled||!['play','note'].includes(game.state)||e.pointerType!=='touch')return;
+    if(!freshInput(e))return;
     const point=mapPoint(e),hit=document.elementFromPoint(point.x,point.y);
     const button=hit?.closest('#touch-controls button');
     const onStick=hit?.closest('.touch-stick');
@@ -60,6 +64,7 @@ export function createTouchControls({player,game,look,pause,closeNote,throwItem,
     }
   },true);
   document.addEventListener('pointermove',e=>{
+    if(!freshInput(e)){if(e.pointerId===lookId)lastLook={x:e.clientX,y:e.clientY};return;}
     if(e.pointerId===stickId){e.preventDefault();updateStick(e);}
     else if(e.pointerId===lookId&&lastLook){e.preventDefault();look(e.clientX-lastLook.x,e.clientY-lastLook.y);lastLook={x:e.clientX,y:e.clientY};}
   },{passive:false,capture:true});
@@ -87,6 +92,9 @@ export function createTouchControls({player,game,look,pause,closeNote,throwItem,
       if(mode!==game.state){mode=game.state;release();}
       root.classList.toggle('hidden',!enabled||portrait||!['play','note'].includes(mode));
       root.classList.toggle('reading',mode==='note');
+      root.querySelector('.touch-torch').classList.toggle('hidden',!flashlight.owned||mode!=='play');
+      root.querySelector('[data-key="KeyT"] span').textContent=`СВЕТ ${Math.round(flashlight.charge*100)}%`;
+      root.querySelector('[data-key="KeyT"]').classList.toggle('selected',flashlight.on);
       root.querySelector('.touch-siege').classList.toggle('hidden',!siege.active||mode!=='play');
       root.querySelector('[data-key="KeyC"]').classList.toggle('selected',player.crouch);
       for(const [code,active] of [['KeyQ',player.holding],['KeyV',player.listening]])root.querySelector(`[data-key="${code}"]`).classList.toggle('selected',!!active);

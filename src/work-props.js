@@ -44,7 +44,7 @@ export function createFuelCan(m) {
   const spout=V(.12,.11,0).addScaledVector(axis,.033);
   g.cap=add(g,new THREE.CylinderGeometry(.024,.024,.018,18),m.rubber,spout.toArray(),q);
   g.spout=new THREE.Object3D();g.spout.position.copy(spout);g.add(g.spout);
-  g.capHome=g.cap.position.clone();g.capAxis=axis;
+  g.capHome=g.cap.position.clone();g.capHomeQ=g.cap.quaternion.clone();g.capAxis=axis;
   return g;
 }
 
@@ -66,12 +66,12 @@ export class GeneratorProps {
     add(this.lever,new THREE.CylinderGeometry(.012,.012,.23,14),m.metal,[0,.115,0]);
     this.knob=add(this.lever,new THREE.CylinderGeometry(.022,.022,.13,16),m.rubber,[0,.23,0]);this.knob.rotation.z=Math.PI/2;
   }
-  sync(flags,frame=null){
+  sync(flags,frame=null,dt=0){
     this.fuses.forEach((o,i)=>o.visible=!!flags.powered||i<(flags.genInstalled||0));
     this.can.visible=!frame||!['uncap','pour','recap'].includes(frame.kind);
     const stroke=frame?.kind==='prime'?frame.time%1:0;
     const pull=THREE.MathUtils.smoothstep(stroke,.24,.62)*(1-THREE.MathUtils.smoothstep(stroke,.65,.96));
-    this.lever.rotation.x=pull*.72;
+    this.lever.rotation.x=frame?.kind==='prime'?pull*.72:dt>0?THREE.MathUtils.damp(this.lever.rotation.x,0,12,dt):this.lever.rotation.x;
     this.group.updateMatrixWorld(true);
   }
 }

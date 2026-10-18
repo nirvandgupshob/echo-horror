@@ -20,7 +20,7 @@ export class HandContact {
     this.boxes.length = 0;
     for (let z = Math.floor(position.z) - 2; z <= Math.floor(position.z) + 2; z++) {
       for (let x = Math.floor(position.x) - 2; x <= Math.floor(position.x) + 2; x++) {
-        if (!L.open(x, z)) {
+        if (!L.open(x, z)&&L.gridWallAt?.(x+.5,z+.5)!==false) {
           const key = `${x},${z}`;
           if (!this.walls.has(key)) this.walls.set(key, new THREE.Box3(V(x, -0.1, z), V(x + 1, 7, z + 1)));
           this.boxes.push(this.walls.get(key));
@@ -46,7 +46,7 @@ export class HandContact {
 
   cast(origin, direction, reach = 0.8) {
     this.ray.set(origin, direction);
-    let best = null;
+    let best = this.level.castRock?.(origin,direction,reach)||null;
     const p = new THREE.Vector3();
     for (const box of this.boxes) {
       if (box.containsPoint(origin) || !this.ray.intersectBox(box, p)) continue;
@@ -66,7 +66,7 @@ export class HandContact {
   }
 
   edge(hit) {
-    if (hit.normal.y > 0.5) return null;
+    if (hit.rock||hit.normal.y > 0.5) return null;
     const { point: p, normal: n, box: b } = hit;
     const axis = Math.abs(n.x) > 0.5 ? 'z' : 'x';
     const candidates = [
@@ -133,6 +133,7 @@ export class HandContact {
         p[sides[0][1]] = sides[0][2];
       }
     }
+    p.add(this.level.rockPushOut?.(p,radius)||V(0,0,0));
     return correction.copy(p).sub(point);
   }
 }

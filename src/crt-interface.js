@@ -96,7 +96,7 @@ export function createCrtInterface(curvature) {
         if (!node.textContent[i].trim()) continue;
         range.setStart(node, i); range.setEnd(node, i + 1);
         const rect = range.getBoundingClientRect();
-        if (rect.width && rect.height) glyphs.push({ text: node.textContent[i], x: rect.left, y: rect.top, height: rect.height, font: `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`, color: style.color, alpha, clip });
+        if (rect.width && rect.height) glyphs.push({ text: node.textContent[i], x: rect.left, y: rect.top, height: rect.height, font: `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`, color: style.color, alpha, clip, floating: !!parent.closest('#prompt, #hint, #objective, #location, #meters, #lamp-status') });
       }
     }
     const ranges = [...root.querySelectorAll('input[type="range"]')].filter((element) => element.getBoundingClientRect().height).map((element) => ({ rect: element.getBoundingClientRect(), fraction: (+element.value - +element.min) / (+element.max - +element.min) }));
@@ -201,6 +201,7 @@ export function createCrtInterface(curvature) {
       context.letterSpacing = '0px';
       const metricsCache = new Map();
       for (const glyph of glyphs) {
+        if (glyph.alpha <= 0.01) continue;
         if (glyph.clip && (glyph.y + glyph.height < glyph.clip.top || glyph.y > glyph.clip.bottom)) continue;
         context.save();
         if (glyph.clip) { context.beginPath(); context.rect(glyph.clip.left, glyph.clip.top, glyph.clip.width, glyph.clip.height); context.clip(); }
@@ -210,6 +211,16 @@ export function createCrtInterface(curvature) {
         if (!metricsCache.has(glyph.font)) metricsCache.set(glyph.font, context.measureText('Mg'));
         const metrics = metricsCache.get(glyph.font);
         const y = glyph.y + (glyph.height - metrics.actualBoundingBoxAscent - metrics.actualBoundingBoxDescent) / 2 + metrics.actualBoundingBoxAscent;
+        if (glyph.floating) {
+          // Canvas capture does not inherit CSS text-shadow. Keep floating
+          // labels legible when an echo lights the wall immediately behind them.
+          context.globalAlpha = glyph.alpha * glyph.alpha;
+          context.lineJoin = 'round';
+          context.lineWidth = 2;
+          context.strokeStyle = 'rgba(0,4,6,0.95)';
+          context.strokeText(glyph.text, glyph.x, y);
+          context.globalAlpha = glyph.alpha;
+        }
         context.fillText(glyph.text, glyph.x, y);
         context.restore();
       }

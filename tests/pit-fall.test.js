@@ -19,10 +19,10 @@ function fixture(){
   const audio={step(){sounds.push('step');},breath(){},gasp(){sounds.push('gasp');},monsterStep(){}};
   const game={state:'play',psychosis:0,noise(){},hint(){}};
   const player=new Player(new THREE.PerspectiveCamera(),level,audio,game);
-  player.reset(V(26.4,27.5),-Math.PI/2);
+  player.reset(V(24.9,27.5),-Math.PI/2);
   const monster=Object.assign(Object.create(Monster.prototype),{
-    level,pos:V(26.69,27.5),state:'sniff',clock:0,stateT:0,suspicion:0,sniffCd:10,
-    path:null,speed:0,assist:{speed:1},headWorld:V(26.69,27.5),audio,
+    level,pos:V(25.3,27.5),state:'sniff',clock:0,stateT:0,suspicion:0,sniffCd:10,
+    path:null,speed:0,assist:{speed:1},headWorld:V(25.3,27.5),audio,
     animate(){},sounds(){},
   });
   return {level,player,monster,game,sounds};
@@ -45,7 +45,7 @@ for(const fps of [30,60,144])test(`walking off the edge falls to impact at ${fps
   p.keys.add('KeyW');
   for(let n=0;n<fps*2;n++)p.update(1/fps);
   assert.ok(p.pitFall?.impacted);
-  assert.equal(p.pos.y,-7);assert.ok(p.camera.position.y<-5);
+  assert.equal(p.pos.y,p.pitGround-7);assert.ok(p.camera.position.y<p.pitGround-5);
   assert.ok(level.isPit(p.pos.x,p.pos.z));assert.ok(p.frozen);
   assert.equal(sounds.filter(s=>s==='gasp').length,1);
   const atImpact=p.pos.clone(),steps=sounds.filter(s=>s==='step').length;
@@ -71,7 +71,7 @@ test('gravity and horizontal momentum are frame-rate independent, with one latch
 
 test('monster A* takes both bypasses and every smoothed segment stays off the pit',()=>{
   const {level}=fixture();level.buildNav();
-  const pairs=[[V(25.5,27.5),V(37.5,27.5)],[V(31.5,21.5),V(31.5,33.5)]];
+  const pairs=[[V(25.5,27.5),V(37.5,27.5)],[V(31.5,20.2),V(31.5,34.5)]];
   for(const [from,to]of pairs){
     assert.ok(level.crossesPit(from,to));
     const path=level.findPath(from,to);assert.ok(path?.length>2);
@@ -85,7 +85,7 @@ test('pathless sniffing cannot creep into the pit',()=>{
   for(let n=0;n<180;n++){
     m.update(1/60,player,game);
     assert.equal(level.isPit(m.pos.x,m.pos.z),false);
-    assert.ok(m.pos.x<=26.700001);
+    assert.ok(m.pos.x<=25.700001);
   }
 });
 
@@ -106,7 +106,7 @@ test('a lunge stops at the pit, and an attempted attack across it replans around
     m.update(1/60,{pos:V(40,27.5)},game);
     assert.equal(level.isPit(m.pos.x,m.pos.z),false);
   }
-  assert.equal(m.state,'recover');assert.ok(m.pos.x<=26.700001);
+  assert.equal(m.state,'recover');assert.ok(m.pos.x<=25.700001);
   level.buildNav();
   assert.equal(m.startWindup(V(37,27.5)),false);
   assert.equal(m.state,'chase');assert.ok(m.path?.length);

@@ -102,7 +102,7 @@ export class Extras {
       // dir: +1 if the foot of the bed points to +x, -1 if to -x
       const inside = V(x - dir * 0.15, 0, z);
       const front = V(x + dir * 1.45, 0, z);
-      L.items.push({ type: 'locker', low: true, pos: V(x + dir * 0.95, 0.42, z), inside, front, yaw: dir > 0 ? -Math.PI / 2 : Math.PI / 2, obj: new THREE.Object3D(), taken: false });
+      L.addHidingPlace({low:true,pos:V(x+dir*.95,.42,z),inside,front,yaw:dir>0?-Math.PI/2:Math.PI/2});
     };
     for (const z of [45.3, 47.8, 50.3]) {
       bed(27.1, z, 1);

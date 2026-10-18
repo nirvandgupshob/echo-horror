@@ -75,12 +75,12 @@ POSES.point = { ...POSES.relaxed, curl: [[.02,.04,.04],[.95,1.35,.65],[1.05,1.4,
 export const CANE_AXIS = V(-0.77, -0.08, -0.63).normalize();
 const CANE_C = V(0, -0.031, -0.068);
 export const CANE_R = 0.0112;
-function solveGrip() {
+function solveGrip(radius=CANE_R,center=CANE_C) {
   const A = CANE_AXIS;
   return FINGERS.map((f, i) => {
     // where the shaft crosses this finger's plane, relative to the knuckle
-    const t = (f.k.x - CANE_C.x) / A.x;
-    const cy = CANE_C.y + A.y * t - (f.k.y - 0.001), cz = CANE_C.z + A.z * t - (f.k.z - 0.003);
+    const t = (f.k.x - center.x) / A.x;
+    const cy = center.y + A.y * t - (f.k.y - 0.001), cz = center.z + A.z * t - (f.k.z - 0.003);
     let best = null;
     for (let a = 0.2; a <= 1.7; a += 0.04)
       for (let b = 0.2; b <= 1.8; b += 0.04)
@@ -95,7 +95,7 @@ function solveGrip() {
             let h = ((cy - y) * dy + (cz - z) * dz) / l2;
             h = h < 0 ? 0 : h > 1 ? 1 : h;
             const d = Math.hypot(cy - y - dy * h, cz - z - dz * h);
-            const want = CANE_R + f.r * (1 - (k + 0.5) * 0.1);
+            const want = radius + f.r * (1 - (k + 0.5) * 0.1);
             if (d < want) cost += (want - d) * (want - d) * 400;
             else cost += (d - want) * (d - want) * [0.15, 1, 1][k];
             y += dy;
@@ -267,8 +267,11 @@ export function handGeometry(pose = 'open') {
   return g;
 }
 
-export function gripInfo() {
-  return { p: CANE_C.clone(), axis: CANE_AXIS.clone(), r: CANE_R, curl: POSES.grip.curl || solveGrip() };
+const gripCache=new Map();
+export function gripInfo(radius=CANE_R) {
+  if(radius===CANE_R)return {p:CANE_C.clone(),axis:CANE_AXIS.clone(),r:radius,curl:POSES.grip.curl||solveGrip()};
+  if(!gripCache.has(radius)){const p=CANE_C.clone();p.y-=radius-CANE_R;gripCache.set(radius,{p,axis:CANE_AXIS.clone(),r:radius,curl:solveGrip(radius,p)});}
+  const g=gripCache.get(radius);return {...g,p:g.p.clone(),axis:g.axis.clone()};
 }
 
 export const handField = (pose) => bevelField(buildPrims(pose));

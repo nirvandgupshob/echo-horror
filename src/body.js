@@ -194,11 +194,12 @@ export function march(field, min, max, step) {
 
 // ---------------------------------------------------------------- public
 const cache = {};
-export function bodyGeometry(pose = 'supine') {
-  if (cache[pose]) return cache[pose];
+export function bodyGeometry(pose = 'supine', step = 0.0085) {
+  const key=`${pose}:${step}`;
+  if (cache[key]) return cache[key];
   const field = makeField(pose);
   const min = V(-0.48, -0.42, -0.93), max = V(0.48, 0.26, 1.02);
-  const g = march(field, min, max, 0.0085);
+  const g = march(field, min, max, step);
   // fine skin irregularity
   const p = g.attributes.position, n = g.attributes.normal;
   for (let i = 0; i < p.count; i++) {
@@ -207,8 +208,8 @@ export function bodyGeometry(pose = 'supine') {
     p.setXYZ(i, x + n.getX(i) * d, y + n.getY(i) * d, z + n.getZ(i) * d);
   }
   g.computeVertexNormals();
-  cache[pose] = { g, field };
-  return cache[pose];
+  cache[key] = { g, field };
+  return cache[key];
 }
 
 // a sheet (or body bag) draped over a body field: blurred heightfield over x/z

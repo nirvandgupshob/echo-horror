@@ -329,6 +329,7 @@ export function tank(L, { body = true } = {}) {
 export function console_(L, w = 1.6) {
   L = K(L, 'paint');
   L.box(0, 0.45, 0, w, 0.9, 0.7);
+  L.box(0, 1.28, -0.31, w, 0.68, 0.12, { collide: false });
   L.box(0, 1.0, -0.05, w, 0.25, 0.6, { collide: false, rot: [-0.5, 0, 0] });
   for (let i = 0; i < 8; i++) L.box(-w / 2 + 0.15 + i * (w - 0.3) / 7, 1.08, 0.08, 0.06, 0.03, 0.06, { collide: false, rot: [-0.5, 0, 0] });
   L.box(-w / 4, 1.45, -0.25, 0.5, 0.38, 0.1, { collide: false });
@@ -410,7 +411,10 @@ export function medCart(L) {
     I.box(0, 0.25 + k * 0.16, 0.238, 0.16, 0.015, 0.012, { collide: false });
   }
   I.box(0, 0.87, 0, 0.64, 0.03, 0.5, { collide: false });
-  for (const [x, z] of [[-0.25, -0.18], [0.25, -0.18], [-0.25, 0.18], [0.25, 0.18]]) K(L, 'rubber').cyl(x, 0.06, z, 0.05, 0.05, 0.03, 14, { collide: false, rot: [0, 0, Math.PI / 2] });
+  for (const [x, z] of [[-0.25, -0.18], [0.25, -0.18], [-0.25, 0.18], [0.25, 0.18]]) {
+    I.box(x, 0.125, z, 0.025, 0.10, 0.06, { collide: false });
+    K(L, 'rubber').cyl(x, 0.06, z, 0.06, 0.06, 0.035, 14, { collide: false, rot: [0, 0, Math.PI / 2] });
+  }
   // bottles and a kidney dish on top
   for (let k = 0; k < 4; k++) K(L, 'glass').cyl(-0.2 + k * 0.09, 0.95, -0.1 + (k % 2) * 0.1, 0.025, 0.025, 0.12, 12, { collide: false, lineKey: 'prop' });
   I.box(0.15, 0.9, 0.08, 0.22, 0.02, 0.12, { collide: false });
@@ -420,6 +424,7 @@ export function oxygenTanks(L, n = 3) {
   const I = K(L, 'iron');
   for (let k = 0; k < n; k++) {
     const x = (k - (n - 1) / 2) * 0.24, tilt = k === n - 1 ? 0.12 : 0;
+    I.cyl(x + tilt * 0.65, 0.08, 0, 0.105, 0.115, 0.16, 20, { collide: false, rot: [0, 0, tilt] });
     I.cyl(x, 0.72, 0, 0.1, 0.1, 1.25, 20, { rot: [0, 0, tilt] });
     I.geo(new THREE.SphereGeometry(0.1, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2), x - tilt * 0.65, 1.34, 0, { collide: false, rot: [0, 0, tilt] });
     K(L, 'rust').cyl(x - tilt * 0.75, 1.47, 0, 0.025, 0.03, 0.1, 10, { collide: false });
@@ -549,6 +554,11 @@ export function screen(L, w = 1.6) {
     const x = (k - 1) * (w / panels) * 0.92;
     K(L, 'iron').box(x, 0.95, 0, w / panels, 1.7, 0.03, { rot: [0, ang, 0] });
     K(L, 'cloth').box(x, 1.0, 0, w / panels - 0.06, 1.4, 0.035, { collide: false, rot: [0, ang, 0] });
+    for(const s of [-1,1]){
+      const px=x+s*w/panels*.42*Math.cos(ang),pz=-s*w/panels*.42*Math.sin(ang);
+      K(L,'iron').cyl(px,.10,pz,.016,.016,.20,8,{collide:false});
+      K(L,'rubber').box(px,.03,pz,.09,.06,.18,{collide:false,rot:[0,ang,0]});
+    }
   }
 }
 

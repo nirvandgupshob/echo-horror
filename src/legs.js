@@ -64,6 +64,8 @@ export class Legs {
       // Face-first fall: the feet trail behind the hips, rather than swinging
       // in front of the camera into a seated pose.
       const ankle = V(leg.side * 0.14 + direction.x * stride, 0.11 + lift, direction.z * stride + fall * 0.92);
+      const footWorld=ankle.clone().applyAxisAngle(UP,player.yaw).add(this.root.position);
+      if(!player.pitFall)ankle.y+=(player.level?.floorHeightAt?.(footWorld.x,footWorld.z)||0)-this.root.position.y;
       const knee = legKnee(hip, ankle);
       if (fall > 0) knee.y = Math.max(0.095, knee.y);
       for (const [mesh, a, b] of [[leg.thigh, hip, knee], [leg.shin, knee, ankle]]) {
