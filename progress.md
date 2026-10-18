@@ -177,3 +177,5 @@ Southern feeder fix verified: 127/127 tests and production build pass. Native We
 
 Boundary fix final detail: player standing/crouch clearance now uses actual cave headroom too, so crossing beyond a legacy floor cell cannot force crouch or trap the C toggle. Added a standing-height regression. Final native boundary runtime rerun after this change; build and 131 tests pass.
 Final standing-camera ray distances are 0.414–0.449m (the body still contacts the same curved wall); the earlier 0.332–0.337m measurements used the inadvertently crouched camera. Both are far below the reproduced 1.26m invisible barrier.
+
+2026-10-18 — User authorized commit/push and Sites publication. Registered owner-private Site appgprj_6ad509b1e1cc81918ff8587222ad3b02; tracked .openai/hosting.json selects the Vite dist static output. Committed all accumulated game changes as 0a9c2e3. Fetched newer origin/main (PR #4): preserve its checkpoint assist reset and crosshair-clearing intent inside the shared game loop, rather than restoring the obsolete separate chapter loop. Validating merged source before publishing the identical Git state to GitHub and Sites.

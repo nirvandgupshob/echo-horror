@@ -407,7 +407,7 @@ function startCave(saved=null,entry=null){
   $('hud').classList.remove('hidden');$('slits').classList.add('hidden');
 }
 function saveCaveCheckpoint(){
-  game.cpDeaths=0;
+  game.cpDeaths=0;applyAssist(); // a new checkpoint lifts the easing, as in chapter I
   const data={v:1,chapter:'cave',cave:chapter.snapshot(),time:game.time,deaths:game.deaths};
   game.checkpoint=data;
   try{localStorage.setItem('echo.save',JSON.stringify(data));}catch(_){}
@@ -2033,6 +2033,7 @@ function tick(dt) {
   updateCrtParallax(dt);
   fx.uniforms.uTime.value += dt;
   const live = game.state === 'play' || game.state === 'note' || game.state === 'dying';
+
   if (live) {
     game.time += dt;
     echo.update(dt);
@@ -2076,9 +2077,10 @@ function tick(dt) {
     audio.setListener(camera);
     if (game.state === 'play' && player.fallT <= 0) {
       focus = chapter.active?chapter.focus(camera):findFocus();
-      $('prompt').textContent = chapter.active?chapter.prompt(focus):promptFor(focus);
-      $('crosshair').classList.toggle('focus', !!focus);
-    } else $('prompt').textContent = '';
+      const prompt=chapter.active?chapter.prompt(focus):promptFor(focus);
+      $('prompt').textContent=prompt;
+      $('crosshair').classList.toggle('focus',chapter.active?!!prompt:!!focus);
+    } else { $('prompt').textContent='';$('crosshair').classList.remove('focus'); }
     updateHint(dt);
     if(!chapter.active)updateLocation(dt);
     updateHUD();
