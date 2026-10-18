@@ -378,7 +378,7 @@ function startCave(saved=null,entry=null){
   $('hud').classList.remove('hidden');$('slits').classList.add('hidden');
 }
 function saveCaveCheckpoint(){
-  game.cpDeaths=0;
+  game.cpDeaths=0;applyAssist(); // a new checkpoint lifts the easing, as in chapter I
   const data={v:1,chapter:'cave',cave:chapter.snapshot(),time:game.time,deaths:game.deaths};
   game.checkpoint=data;
   try{localStorage.setItem('echo.save',JSON.stringify(data));}catch(_){}
@@ -1940,7 +1940,11 @@ function tick(dt) {
   const live = game.state === 'play' || game.state === 'note' || game.state === 'dying';
   if(chapter.active&&live){
     game.time+=dt;echo.update(dt);
-    if(game.state==='play')$('prompt').textContent=chapter.update(dt,camera);
+    // The prompt is empty exactly when nothing is in focus; the crosshair follows it
+    // (otherwise it keeps the highlight left by the lift button of chapter I).
+    const prompt=game.state==='play'?chapter.update(dt,camera):'';
+    if(game.state==='play')$('prompt').textContent=prompt;
+    $('crosshair').classList.toggle('focus',!!prompt);
     player.update(dt,scene);camera.updateMatrixWorld(true);
     if(player.pitFall?.impacted&&game.state==='play')die('pit');
     vm.root.visible=game.state!=='dying'&&!player.pitFall&&!player.hidden;vm.update(dt,camera,player);
