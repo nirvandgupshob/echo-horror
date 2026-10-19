@@ -9,7 +9,7 @@ const HULL=[[0,.27,-.28,.35],[0,.27,.22,.29],[.02,.29,.47,.31],[0,.27,.65,.26],[
 // This includes rock lips, props and beams which are absent from the floor nav.
 export class SpiderSurface{
  constructor(scene,exclude,level=null){
-  this.level=level;this.doors=[];
+  this.level=level;this.doors=[];this.visited=new Uint32Array(4096);this.queryId=0;
   this.cells=new Map();this.trees=new Map();this.triangles=[];this.buffers=[];this.tri=new THREE.Triangle();this.closest=V();this.ray=new THREE.Ray();this.edge=V();this.tmp=V();this.delta=V();
   scene.updateMatrixWorld(true);
   const visit=o=>{
@@ -31,9 +31,10 @@ export class SpiderSurface{
   const normal=this.tri.set(a,b,c).getNormal(V());if(normal.lengthSq()<.5)return;
   const min=[Math.min(a.x,b.x,c.x),Math.min(a.y,b.y,c.y),Math.min(a.z,b.z,c.z)],max=[Math.max(a.x,b.x,c.x),Math.max(a.y,b.y,c.y),Math.max(a.z,b.z,c.z)],id=this.triangles.length;
   if(!(id%4096))this.buffers.push(new Float32Array(4096*18));const data=this.buffers[id>>12],offset=(id&4095)*18;
+  if(id>=this.visited.length){const next=new Uint32Array(this.visited.length*2);next.set(this.visited);this.visited=next;}
   data.set([...a,...b,...c,...normal,...min,...max],offset);this.triangles.push(id);
   for(let z=Math.floor(min[2]/CELL);z<=Math.floor(max[2]/CELL);z++)for(let y=Math.floor(min[1]/CELL);y<=Math.floor(max[1]/CELL);y++)for(let x=Math.floor(min[0]/CELL);x<=Math.floor(max[0]/CELL);x++){
-   const k=key(x,y,z);if(!this.cells.has(k))this.cells.set(k,[]);this.cells.get(k).push(id);
+   const k=key(x,y,z);if(!this.cells.has(k))this.cells.set(k,[]);this.cells.get(k).push(id);this.trees.delete(k);
   }
  }
  triangle(id){const d=this.buffers[id>>12],i=(id&4095)*18;this.tri.a.fromArray(d,i);this.tri.b.fromArray(d,i+3);this.tri.c.fromArray(d,i+6);return this.tri;}
@@ -47,12 +48,16 @@ export class SpiderSurface{
   const middle=ids.length>>1;node.left=this.tree(ids.slice(0,middle));node.right=this.tree(ids.slice(middle));return node;
  }
  nearby(a,b,r){
-  const min=[Math.min(a.x,b.x)-r,Math.min(a.y,b.y)-r,Math.min(a.z,b.z)-r],max=[Math.max(a.x,b.x)+r,Math.max(a.y,b.y)+r,Math.max(a.z,b.z)+r],found=new Set(),result=[];
+  const min=[Math.min(a.x,b.x)-r,Math.min(a.y,b.y)-r,Math.min(a.z,b.z)-r],max=[Math.max(a.x,b.x)+r,Math.max(a.y,b.y)+r,Math.max(a.z,b.z)+r],result=[];
+  // A triangle may overlap several cells. Generation stamps avoid allocating
+  // and hashing a Set for every joint/sphere query, including rejected bounds.
+  this.queryId=(this.queryId+1)>>>0;if(!this.queryId){this.visited.fill(0);this.queryId=1;}
+  const stamp=this.queryId;
   const collect=ids=>{for(const id of ids){
-   if(found.has(id))continue;const d=this.buffers[id>>12],i=(id&4095)*18;
-   if(d[i+12]<=max[0]&&d[i+15]>=min[0]&&d[i+13]<=max[1]&&d[i+16]>=min[1]&&d[i+14]<=max[2]&&d[i+17]>=min[2]){found.add(id);result.push(id);}
+   if(this.visited[id]===stamp)continue;this.visited[id]=stamp;const d=this.buffers[id>>12],i=(id&4095)*18;
+   if(d[i+12]<=max[0]&&d[i+15]>=min[0]&&d[i+13]<=max[1]&&d[i+16]>=min[1]&&d[i+14]<=max[2]&&d[i+17]>=min[2])result.push(id);
   }};
-  const query=node=>{if(node.min.some((v,i)=>v>max[i]||node.max[i]<min[i]))return;if(node.ids)collect(node.ids);else{query(node.left);query(node.right);}};
+  const query=node=>{const a=node.min,b=node.max;if(a[0]>max[0]||b[0]<min[0]||a[1]>max[1]||b[1]<min[1]||a[2]>max[2]||b[2]<min[2])return;if(node.ids)collect(node.ids);else{query(node.left);query(node.right);}};
   for(let z=Math.floor(min[2]/CELL);z<=Math.floor(max[2]/CELL);z++)for(let y=Math.floor(min[1]/CELL);y<=Math.floor(max[1]/CELL);y++)for(let x=Math.floor(min[0]/CELL);x<=Math.floor(max[0]/CELL);x++){
    const k=key(x,y,z),ids=this.cells.get(k);if(!ids)continue;
    if(ids.length<80)collect(ids);else{if(!this.trees.has(k))this.trees.set(k,this.tree(ids.slice()));query(this.trees.get(k));}
@@ -73,6 +78,7 @@ export class SpiderSurface{
    const tri=this.triangle(id);
    if(length>.00001&&this.ray.intersectTriangle(tri.a,tri.b,tri.c,false,this.closest)&&this.closest.distanceToSquared(a)<=length*length+1e-9)return false;
    tri.closestPointToPoint(a,this.closest);if(a.distanceToSquared(this.closest)<rr)return false;
+   if(length===0)continue; // A sphere needs one exact point/triangle distance.
    tri.closestPointToPoint(b,this.closest);if(b.distanceToSquared(this.closest)<rr)return false;
    if(this.edgeDistance(a,b,tri.a,tri.b)<rr||this.edgeDistance(a,b,tri.b,tri.c)<rr||this.edgeDistance(a,b,tri.c,tri.a)<rr)return false;
   }
@@ -102,9 +108,9 @@ export class SpiderSurface{
    }if(distance<r)return delta.divideScalar(Math.max(.00001,distance)).multiplyScalar(r-distance+.003);
   }
   for(const id of this.nearby(point,point,r+.12)){
-   const tri=this.triangle(id),normal=this.normal(id);
-   tri.closestPointToPoint(point,this.closest);const delta=point.clone().sub(this.closest),distance=delta.length();
-   if(distance<nearest){nearest=distance;best={delta,normal};}
+   const tri=this.triangle(id);
+   tri.closestPointToPoint(point,this.closest);const distance=point.distanceTo(this.closest);
+   if(distance<nearest){nearest=distance;best={delta:point.clone().sub(this.closest),normal:this.normal(id)};}
   }
   if(!best)return V();
   const signed=best.delta.dot(best.normal),penetration=r-(signed<-.0001?-nearest:nearest);

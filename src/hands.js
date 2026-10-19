@@ -269,7 +269,9 @@ export function handGeometry(pose = 'open') {
 
 const gripCache=new Map();
 export function gripInfo(radius=CANE_R) {
-  if(radius===CANE_R)return {p:CANE_C.clone(),axis:CANE_AXIS.clone(),r:radius,curl:POSES.grip.curl||solveGrip()};
+  // The cane dimensions are fixed. Keep the solved joints, just as we do for
+  // other handles, rather than repeating the exhaustive search every frame.
+  if(radius===CANE_R)return {p:CANE_C.clone(),axis:CANE_AXIS.clone(),r:radius,curl:POSES.grip.curl ||= solveGrip()};
   if(!gripCache.has(radius)){const p=CANE_C.clone();p.y-=radius-CANE_R;gripCache.set(radius,{p,axis:CANE_AXIS.clone(),r:radius,curl:solveGrip(radius,p)});}
   const g=gripCache.get(radius);return {...g,p:g.p.clone(),axis:g.axis.clone()};
 }

@@ -70,3 +70,17 @@ test('a locally blocked roof waypoint is excluded from the next route',()=>{
  const surface={capsuleClear:()=>true},level={roofAt:()=>6},nav=new SpiderPath(level,surface),from=V(45.5,5,19.5),to=V(53.5,5,19.5),first=nav.find(from,to);
  assert.ok(first.length);const blocked=first[3];nav.block(blocked);const next=nav.find(from,to);assert.ok(next.length);assert.ok(next.every(p=>p.x!==blocked.x||p.z!==blocked.z));
 });
+
+test('sphere queries equal direct triangle distance at faces, edges and vertices',()=>{
+ const s=new SpiderSurface(new THREE.Group()),a=V(0,0,0),b=V(1,0,0),c=V(0,1,0),triangle=new THREE.Triangle(a,b,c),closest=V();s.add(a,b,c);
+ for(let x=-.2;x<1.3;x+=.13)for(let y=-.2;y<1.3;y+=.13)for(const z of [-.2,-.03,0,.03,.2]){
+  const p=V(x,y,z);triangle.closestPointToPoint(p,closest);
+  assert.equal(s.capsuleClear(p,p,.06),p.distanceToSquared(closest)>=.06**2);
+ }
+});
+test('query stamps survive overflow and adding triangles after tree creation',()=>{
+ const s=new SpiderSurface(new THREE.Group());for(let i=0;i<85;i++)s.add(V(0,i*.001,0),V(1,i*.001,0),V(0,i*.001,1));
+ const p=V(.1,.04,.1),before=s.nearby(p,p,.2);assert.equal(new Set(before).size,before.length);
+ s.queryId=0xffffffff;assert.deepEqual(s.nearby(p,p,.2),before);
+ s.add(V(0,.04,0),V(1,.04,0),V(0,.04,1));assert.ok(s.nearby(p,p,.2).includes(85));
+});

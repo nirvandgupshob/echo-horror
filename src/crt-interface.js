@@ -27,6 +27,8 @@ export function createCrtInterface(curvature) {
   let dragging = null;
   let previousRoot = null;
   let rootChangedAt = 0;
+  let wasAnimating = false;
+  const stats = { captures: 0, lastCaptureMs: 0 };
   const activeRoot = () => roots.find((root) => !root.classList.contains('hidden')) || null;
   const invalidate = () => { dirty = true; };
   const isMenu = (root) => menus.includes(root);
@@ -44,11 +46,24 @@ export function createCrtInterface(curvature) {
     image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(new XMLSerializer().serializeToString(clone))}`;
     return { element, image };
   });
-  const observer = new MutationObserver(invalidate);
+  function changed(records) {
+    const root=activeRoot();
+    return records.some(record=>{
+      if(record.type==='attributes'&&record.oldValue===record.target.getAttribute(record.attributeName))return false;
+      const element=record.target.nodeType===3?record.target.parentElement:record.target;
+      if(!element)return false;
+      if(element===document.body||element===fade||element===slits)return true;
+      if(element.closest('#render-stats')&&!document.body.classList.contains('render-debug'))return false;
+      if(element.closest('#meters')&&!document.body.classList.contains('show-player-meters'))return false;
+      return !!root?.contains(element)||!touchControls.classList.contains('hidden')&&touchControls.contains(element);
+    });
+  }
+  const observer = new MutationObserver(records=>{if(changed(records))invalidate();});
   for (const root of [...roots, fade, slits, touchControls]) observer.observe(root, {
     subtree: true, childList: true, characterData: true,
-    attributes: true, attributeFilter: ['class', 'style', 'aria-valuenow'],
+    attributes: true, attributeOldValue: true, attributeFilter: ['class', 'style', 'aria-valuenow'],
   });
+  observer.observe(document.body,{attributes:true,attributeOldValue:true,attributeFilter:['class']});
   for (const event of ['input', 'change', 'focusin', 'focusout']) document.addEventListener(event, invalidate);
   addEventListener('resize', invalidate);
   document.addEventListener('scroll', invalidate, true);
@@ -73,6 +88,7 @@ export function createCrtInterface(curvature) {
   });
 
   async function capture(root) {
+    const started=performance.now();
     busy = true;
     dirty = false;
     lastCapture = performance.now();
@@ -265,6 +281,7 @@ export function createCrtInterface(curvature) {
       enabled = false;
       document.body.classList.remove('crt-interface-ready');
     } finally {
+      stats.captures++;stats.lastCaptureMs=performance.now()-started;
       busy = false;
     }
   }
@@ -403,6 +420,7 @@ export function createCrtInterface(curvature) {
   }, true);
 
   return {
+    stats,
     texture,
     mapPoint: mappedPoint,
     get ready() { return ready; },
@@ -411,7 +429,7 @@ export function createCrtInterface(curvature) {
     get visible() { return enabled && ready && !!activeRoot() && renderedRoot === activeRoot() && renderedView === (activeRoot()?.dataset.screen || ''); },
     update(now) {
       const root = activeRoot();
-      if (observer.takeRecords().length) dirty = true;
+      if (changed(observer.takeRecords())) dirty = true;
       if (root !== previousRoot) {
         previousRoot = root;
         rootChangedAt = now;
@@ -420,10 +438,15 @@ export function createCrtInterface(curvature) {
         invalidate();
       }
       if (root?.id === 'end' && now - rootChangedAt < 20000 && now - lastCapture > 200) dirty = true;
-      // HUD fades, the listening marker and the live radar animate at 30 Hz.
-      // Menu interaction keeps its full-rate, change-driven updates.
+      // Keep the full-resolution canvas/texture until its pixels change. A
+      // stationary HUD must not upload a screen-sized bitmap 30 times/sec.
+      // CSS fades still run at 30 Hz, including their final settled frame.
       const interval = isMenu(root) ? 1000 / 60 : 1000 / 30;
-      if (root && !isMenu(root)) dirty = true;
+      const running=element=>element?.getAnimations?.({subtree:true}).some(a=>a.playState==='running');
+      const animating=!!root&&(running(root)||running(fade)||!isMenu(root)&&
+        (!root.getAnimations||root.querySelector('#listen:not(.hidden), #radar:not(.hidden)')));
+      if(animating||wasAnimating)dirty=true;
+      wasAnimating=!!animating;
       if (enabled && root && dirty && !busy && (root !== renderedRoot || now - lastCapture >= interval - 1)) capture(root);
     },
   };
