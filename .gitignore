@@ -4,3 +4,10 @@ dist/
 .claude/
 lab/
 artifacts/
+
+# showcase renders
+trailer/build/
+trailer/edit/vo/
+trailer/edit/*.wav
+trailer/edit/*.mp4
+trailer/edit/__pycache__/
