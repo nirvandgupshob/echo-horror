@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import {mergeVertices} from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import {Builder} from './builder.js';
 import {caveField,pitField,pitRadius} from './cave-layout.js';
-import {hospitalWeight} from './cave-style.js';
+import {hospitalWeight,hospitalTextureWeight} from './cave-style.js';
 import {groundHeight} from './cave-terrain.js';
 export {groundHeight} from './cave-terrain.js';
 const V=(x,y,z)=>new THREE.Vector3(x,y,z),loose={collide:false,walk:true};
@@ -42,9 +42,10 @@ export function buildCaveGeology(level){
    if(hospitalWeight(Math.floor(cx)+.5,Math.floor(cz)+.5)>.97&&level.open(Math.floor(cx),Math.floor(cz)))continue;
    const zone=level.zones[Math.floor(cz)*64+Math.floor(cx)];
    const stone=zone===5?'geoSalt':zone===3?'geoDark':'geoRock';
-   for(let i=1;i<inside.length-1;i++)triangle(stone,inside[0],inside[i],inside[i+1],true);
+   const transition=inside.some(p=>hospitalTextureWeight(p.x,p.z)>0);
+   for(let i=1;i<inside.length-1;i++)triangle(transition?'roofTransition':stone,inside[0],inside[i],inside[i+1],true);
    const floor=clip(inside.map(p=>({...p,f:pitField(p.x,p.z)})));
-   const floorKey=hospitalWeight(cx,cz)>.55?'linoleum':zone===2?'geoMud':zone===5?'geoSaltFloor':'geoEarth';
+   const floorKey=transition?(zone===2?'floorTransitionWet':'floorTransition'):zone===2?'geoMud':zone===5?'geoSaltFloor':'geoEarth';
    for(let i=1;i<floor.length-1;i++)triangle(floorKey,floor[0],floor[i],floor[i+1]);
    const crossings=inside.filter(p=>Math.abs(p.f)<1e-9);
    if(crossings.length===2){
@@ -87,7 +88,22 @@ export function buildCaveGeology(level){
   const base=groundHeight(x,z),h=level.roofAt(x,z)-base+.2,g=new THREE.CylinderGeometry(r*.7,r,h,12,14),p=g.attributes.position;
   for(let i=0;i<p.count;i++){const y=p.getY(i),k=1+.13*rockNoise(x+p.getX(i),y,z+p.getZ(i));p.setXYZ(i,p.getX(i)*k,y+h/2,p.getZ(i)*k);}g.computeVertexNormals();B.add(g,{...loose,key:'geoRock',pos:[x,groundHeight(x,z),z]});g.dispose();pillars.push({minX:x-r,maxX:x+r,minZ:z-r,maxZ:z+r,minY:base,maxY:base+h});
  }
- for(const {key,positions}of parts.values()){const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));const smooth=mergeVertices(g,1e-4);smooth.computeVertexNormals();B.add(smooth,{...loose,key});smooth.dispose();g.dispose();}
+ // Give shared floor/roof vertices the same normals on both sides of material
+ // and spatial batch boundaries. Otherwise triplanar weights expose each patch.
+ for(const {key,positions}of parts.values()){
+  const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));
+  const smooth=mergeVertices(g,1e-4);smooth.computeVertexNormals();
+  const p=smooth.attributes.position,n=smooth.attributes.normal,colors=[];
+  for(let i=0;i<p.count;i++){
+   const x=p.getX(i),y=p.getY(i),z=p.getZ(i),floor=Math.abs(y-groundHeight(x,z))<.001,roof=Math.abs(y-level.roofAt(x,z))<.001;
+   if(floor||roof){const height=floor?groundHeight:(x,z)=>level.roofAt(x,z),sign=floor?1:-1;
+    const normal=V((height(x-.02,z)-height(x+.02,z))/.04,1,(height(x,z-.02)-height(x,z+.02))/.04).normalize().multiplyScalar(sign);n.setXYZ(i,...normal);
+   }
+   if(key.startsWith('floorTransition')||key==='roofTransition')colors.push(hospitalTextureWeight(x,z),0,0);
+  }
+  if(colors.length)smooth.setAttribute('color',new THREE.Float32BufferAttribute(colors,3));
+  B.add(smooth,{...loose,key});smooth.dispose();g.dispose();
+ }
  const group=B.build(level.mat,{});group.name='continuous-cave-shell';level.scene.add(group);
  level.geology={group,walls,wallCells,pillars,triangleCount:[...parts.values()].reduce((n,a)=>n+a.positions.length/9,0)};
  return group;

@@ -1,5 +1,11 @@
+import {text as localizedText,html as localizedHTML,initializeLanguage,getLanguage,setLanguage,onLanguageChange} from './i18n.js';
 const $ = (id) => document.getElementById(id);
+initializeLanguage();
 const root = $('start');
+const languageControl=$('language');
+languageControl.value=getLanguage();
+languageControl.addEventListener('change',()=>setLanguage(languageControl.value));
+onLanguageChange(value=>languageControl.value=value);
 let screen = 'loading';
 let backTo = 'menu';
 let actions = {};
@@ -31,18 +37,18 @@ function back() {
 }
 function progress(label, fraction, detail) {
   const value = Math.max(0, Math.min(100, Math.round(fraction * 100)));
-  $('load-label').textContent = label;
-  $('load-value').textContent = `${value}%`;
+  localizedText($('load-label'), label);
+  localizedText($('load-value'), `${value}%`);
   $('load-progress').setAttribute('aria-valuenow', value);
   $('load-progress').querySelector('i').style.width = `${value}%`;
-  if (detail) $('load-detail').textContent = detail;
+  if (detail) localizedText($('load-detail'), detail);
 }
 function showLoading(label, detail) {
   progress(label, 0, detail);
   show('loading', { focus: false });
   clearTimeout(loadingTimer);
   loadingTimer = setTimeout(() => {
-    $('load-detail').textContent = 'Загрузка продолжается. При медленном соединении потребуется больше времени.';
+    localizedText($('load-detail'), 'Загрузка продолжается. При медленном соединении потребуется больше времени.');
   }, 18000);
 }
 
@@ -69,15 +75,15 @@ export const front = {
   briefing(callback, fromSave = false) {
     clearTimeout(loadingTimer);
     begin = callback;
-    $('briefing-heading').innerHTML = fromSave ? 'Снова<br>в темноту.' : 'Ночью станция<br>замолчала.';
+    localizedHTML($('briefing-heading'), fromSave ? 'Снова<br>в темноту.' : 'Ночью станция<br>замолчала.');
     $('intro').classList.toggle('hidden', fromSave);
-    $('begin-session').firstChild.textContent = fromSave ? 'ПРОДОЛЖИТЬ ' : 'ОТКРЫТЬ ГЛАЗА ';
+    localizedText($('begin-session').firstChild, fromSave ? 'ПРОДОЛЖИТЬ ' : 'ОТКРЫТЬ ГЛАЗА ');
     show('briefing');
   },
   fail(message, callback) {
     clearTimeout(loadingTimer);
     retry = callback;
-    $('load-error').textContent = message;
+    localizedText($('load-error'), message);
     show('error');
   },
 };
@@ -154,12 +160,12 @@ $('fullscreen').addEventListener('click', async () => {
   try {
     if (document.fullscreenElement) await document.exitFullscreen();
     else await document.documentElement.requestFullscreen();
-    $('settings-message').textContent = '';
+    localizedText($('settings-message'), '');
   } catch (_) {
-    $('settings-message').textContent = 'Полный экран недоступен в этом браузере.';
+    localizedText($('settings-message'), 'Полный экран недоступен в этом браузере.');
   }
 });
 addEventListener('fullscreenchange', () => {
-  $('fullscreen').textContent = document.fullscreenElement ? 'Выйти из полного экрана ↙' : 'На весь экран ↗';
+  localizedText($('fullscreen'), document.fullscreenElement ? 'Выйти из полного экрана ↙' : 'На весь экран ↗');
 });
 showLoading('Подготовка игры', 'Загрузка геометрии и материалов.');

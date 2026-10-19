@@ -10,7 +10,9 @@ const path = require('node:path');
   page.on('pageerror',e=>errors.push(e.message));
   page.on('console',m=>{if(m.type()==='error')errors.push(`${m.text()} ${m.location().url}`);});
   page.on('response',r=>{if(r.status()>=400)missing.push(`${r.status()} ${r.url()}`);});
-  await page.goto(process.env.GAME_URL||'http://127.0.0.1:4173/');
+  const gameURL=new URL(process.env.GAME_URL||'http://127.0.0.1:4173/');
+  gameURL.searchParams.set('mute','1');
+  await page.goto(gameURL.href);
   await page.waitForFunction(()=>window.__game&&document.querySelector('#start').dataset.screen==='headphones',{timeout:120000});
   fs.mkdirSync(path.resolve('artifacts'),{recursive:true});
   console.log('loaded',await page.evaluate(()=>render_game_to_text()));
@@ -52,6 +54,7 @@ const path = require('node:path');
     if(!transition.chapter||!transition.closed||Math.abs(transition.dx-1)>.02||Math.abs(transition.dz-5.38)>.02)throw new Error('Original lift transition changed relative player position or left the hospital motor running');
   }
   await page.waitForFunction(()=>window.__game.chapter.active);
+  if(!await page.evaluate(()=>__game.audio.muted&&__game.audio.master.gain.value===0))throw new Error('Browser verification must run with audio muted');
   const reused=await page.evaluate(before=>{
     const g=window.__game,meshes=[];
     g.caveLevel.liftRoot.traverse(o=>{if(o.isMesh)meshes.push([o.uuid,o.geometry.uuid,o.material.uuid]);});

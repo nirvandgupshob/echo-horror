@@ -10,7 +10,7 @@ export function createFlashlightShadow(renderer,scene,G=THREE,override=null){
   const camera=new G.PerspectiveCamera(46,1,.06,18);
   const material=override||new THREE.ShaderMaterial({
     side:THREE.DoubleSide,
-    vertexShader:`#include <common>\n#include <skinning_pars_vertex>\nvarying float vDepth;void main(){vec3 transformed=position;\n#include <skinbase_vertex>\n#include <skinning_vertex>\nvec4 p=modelViewMatrix*vec4(transformed,1.0);vDepth=-p.z/18.0;gl_Position=projectionMatrix*p;}`,
+    vertexShader:`#include <common>\n#include <skinning_pars_vertex>\nvarying float vDepth;void main(){vec3 transformed=position;\n#include <skinbase_vertex>\n#include <skinning_vertex>\n#ifdef USE_INSTANCING\ntransformed=(instanceMatrix*vec4(transformed,1.0)).xyz;\n#endif\nvec4 p=modelViewMatrix*vec4(transformed,1.0);vDepth=-p.z/18.0;gl_Position=projectionMatrix*p;}`,
     fragmentShader:'varying float vDepth;void main(){gl_FragColor=vec4(vec3(vDepth),1.0);}',
   });
   let last=-Infinity;

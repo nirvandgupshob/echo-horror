@@ -3,7 +3,10 @@ const smooth=(a,b,x)=>{const t=Math.max(0,Math.min(1,(x-a)/(b-a)));return t*t*(3
 // Graded working landings; the surrounding rock keeps its natural relief.
 const landings=[[49.5,17.5,2.4],[50.5,47.5,3],[20.6,29.8,1.8],[51.5,32,1.8]];
 function terrain(x,z){
- const ward=1-smooth(18,21,x),flood=ward*smooth(18.5,21,z)*(1-smooth(33,35,z));
+ // The ward landing must already meet the low flooded floor at its edge.
+ // Starting the flood grade later made a steep half-metre trench at z=19–20,
+ // stretching the hospital texture into a strip across the entrance.
+ const ward=1-smooth(18,21,x),flood=ward*smooth(17,19,z)*(1-smooth(33,35,z));
  let relief=.68*Math.sin(x*.19+z*.12)+.42*Math.sin(z*.29-x*.095)+.19*Math.sin(x*.85)*Math.sin(z*.73);
  // Rounded strata rise as broad shelves, with small broken rock underfoot.
  relief+=.28*Math.tanh(Math.sin(x*.39+z*.18)*3)+.06*Math.sin(x*2.3+z*1.7);

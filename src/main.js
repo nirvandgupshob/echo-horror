@@ -1,3 +1,4 @@
+import {text as localizedText,html as localizedHTML,t,getLanguage} from './i18n.js';
 import * as THREE from 'three';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
@@ -340,7 +341,7 @@ const game = {
     if (urgent) {
       hintQueue.length = 0;
       hintT = 0;
-      $('hint').textContent = text;
+      localizedText($('hint'), text);
       $('hint').style.opacity = 1;
       hintT = dur;
       return;
@@ -403,7 +404,7 @@ function startCave(saved=null,entry=null){
   for(const loop of [waterLoop,generator,lift,drone])if(loop)loop.setGain(0,.1);
   roomVisibility=caveVisibility;echo.clear();chapter.start(saved,entry);
   psyMem=psyFlare=smear=glitchT=0;
-  $('location').textContent='';$('location').style.opacity=0;
+  localizedText($('location'), '');$('location').style.opacity=0;
   $('hud').classList.remove('hidden');$('slits').classList.add('hidden');
 }
 function saveCaveCheckpoint(){
@@ -417,8 +418,8 @@ function finishCave(){
   clearSave();$('fade').style.opacity=1;
   if(document.pointerLockElement)document.exitPointerLock();
   $('hud').classList.add('hidden');$('end').classList.remove('hidden');
-  $('end-text').innerHTML=CAVE_ENDING.map((text,i)=>`<p style="animation-delay:${i*1.8}s">${text}</p>`).join('');
-  $('end-stats').textContent=`ГОРИЗОНТ −11 ПРОЙДЕН · смертей: ${game.deaths}`;
+  localizedHTML($('end-text'), CAVE_ENDING.map((text,i)=>`<p style="animation-delay:${i*1.8}s">${text}</p>`).join(''));
+  localizedText($('end-stats'), `ГОРИЗОНТ −11 ПРОЙДЕН · смертей: ${game.deaths}`);
 }
 let chaseHinted = false;
 monster.onChase = (on) => {
@@ -449,19 +450,19 @@ const siegeUI = {
     const lowered = ['A', 'B', 'C'].find(k => sg.shut[k]);
     const p = Math.min(1, sg.t / SIEGE_TIME);
     $('sg-lift').style.width = `${p * 100}%`;
-    $('sg-floor').textContent = sg.arrived ? 'ЗДЕСЬ' : sg.stalled ? 'СТОП' : `${Math.ceil(sg.remaining)} с`;
+    localizedText($('sg-floor'), sg.arrived ? 'ЗДЕСЬ' : sg.stalled ? 'СТОП' : `${Math.ceil(sg.remaining)} с`);
     const hpOf = (k) => (sg.broken[k] > 0 ? 'ВЫРВАНА' : `${Math.ceil(sg.hp[k])}%`);
     $('sg-power').style.width = `${lowered ? sg.hp[lowered] : 0}%`;
     $('sg-power').classList.toggle('low', lowered && sg.hp[lowered] < 30);
-    $('sg-pw').textContent = lowered === 'A' ? 'ДВЕРЬ' : lowered === 'B' ? 'ЛЮК' : lowered === 'C' ? 'СЛЕВА' : '—';
+    localizedText($('sg-pw'), lowered === 'A' ? 'ДВЕРЬ' : lowered === 'B' ? 'ЛЮК' : lowered === 'C' ? 'СЛЕВА' : '—');
     $('sg-charge').style.width = `${sg.power}%`;
     $('sg-charge').classList.toggle('low', sg.power < 25);
-    $('sg-charge-value').textContent = sg.powerLocked ? '—' : `${Math.ceil(sg.power)}%`;
+    localizedText($('sg-charge-value'), sg.powerLocked ? '—' : `${Math.ceil(sg.power)}%`);
     for (const [i, k] of ['A', 'B', 'C'].entries()) {
-      $(`sg-${k}`).textContent = `${['ДВЕРЬ', 'ЛЮК', 'СЛЕВА'][i]} ${sg.shut[k] ? '▼' : '▲'} ${hpOf(k)} [${i + 1}]`;
+      localizedText($(`sg-${k}`), `${['ДВЕРЬ', 'ЛЮК', 'СЛЕВА'][i]} ${sg.shut[k] ? '▼' : '▲'} ${hpOf(k)} [${i + 1}]`);
       $(`sg-${k}`).classList.toggle('shut', sg.shut[k]);
     }
-    $('sg-warn').textContent = sg.phase === 'inside' && sg.monsterInHall ? 'ОНО В ХОЛЛЕ' : sg.phase === 'squeeze' ? 'ЛЕЗЕТ ВНУТРЬ' : sg.stalled ? 'ЛИФТ ВСТАЛ · КНОПКА ВЫЗОВА' : sg.powerLocked ? 'ПРИВОД ОСТЫВАЕТ' : sg.bracing ? 'ПОДПИРАЕШЬ ЗАСЛОНКУ' : sg.phase === 'ram' ? (sg.route === 'A' ? 'БЬЁТСЯ В ДВЕРЬ' : sg.route === 'B' ? 'БЬЁТСЯ В ЛЮК' : 'БЬЁТСЯ СЛЕВА') : '';
+    localizedText($('sg-warn'), sg.phase === 'inside' && sg.monsterInHall ? 'ОНО В ХОЛЛЕ' : sg.phase === 'squeeze' ? 'ЛЕЗЕТ ВНУТРЬ' : sg.stalled ? 'ЛИФТ ВСТАЛ · КНОПКА ВЫЗОВА' : sg.powerLocked ? 'ПРИВОД ОСТЫВАЕТ' : sg.bracing ? 'ПОДПИРАЕШЬ ЗАСЛОНКУ' : sg.phase === 'ram' ? (sg.route === 'A' ? 'БЬЁТСЯ В ДВЕРЬ' : sg.route === 'B' ? 'БЬЁТСЯ В ЛЮК' : 'БЬЁТСЯ СЛЕВА') : '');
   },
 };
 function drawRadar(node) {
@@ -637,7 +638,7 @@ function updateHint(dt) {
     $('hint').style.opacity = 0;
     if (hintT < -0.8 && hintQueue.length) {
       const h = hintQueue.shift();
-      $('hint').textContent = h.text;
+      localizedText($('hint'), h.text);
       $('hint').style.opacity = 1;
       hintT = h.dur;
     }
@@ -651,7 +652,7 @@ function updateLocation(dt) {
   if (r && r !== lastRoom) {
     lastRoom = r;
     if (!visited.has(r.name)) {
-      $('location').textContent = r.name.toUpperCase();
+      localizedText($('location'), r.name.toUpperCase());
       $('location').style.opacity = 1;
       locT = 2.5;
     }
@@ -707,7 +708,7 @@ function updateObjective() {
     // closes, so a plot update is never spent behind the paper overlay.
     objectivePending = lastObjective !== null && !!text;
     lastObjective = text;
-    $('objective-text').textContent = text;
+    localizedText($('objective-text'), text);
   }
   if (game.state === 'play' && objectivePending) {
     objectiveUntil = game.time + 6;
@@ -716,15 +717,15 @@ function updateObjective() {
   const recall = player.keys.has('Tab');
   const visible = game.state === 'play' && !!text && (recall || game.time < objectiveUntil);
   const caption = recall ? 'Вспомнить' : 'Новая цель';
-  if ($('objective-caption').textContent !== caption) $('objective-caption').textContent = caption;
+  if ($('objective-caption').textContent !== caption) localizedText($('objective-caption'), caption);
   $('objective').classList.toggle('visible', visible);
   if ($('objective').getAttribute('aria-hidden') !== String(!visible)) $('objective').setAttribute('aria-hidden', String(!visible));
 }
 
 function updateHUD() {
   $('lamp-status').classList.toggle('hidden',!flashlight.owned||!chapter.active);
-  $('lamp-state').textContent=flashlight.shaking?'ЗАРЯДКА':flashlight.on?'ФОНАРЬ':'ФОНАРЬ ВЫКЛ.';
-  $('lamp-charge').textContent=`${Math.round(flashlight.charge*100)}%`;
+  localizedText($('lamp-state'), flashlight.shaking?'ЗАРЯДКА':flashlight.on?'ФОНАРЬ':'ФОНАРЬ ВЫКЛ.');
+  localizedText($('lamp-charge'), `${Math.round(flashlight.charge*100)}%`);
   $('lamp-status').classList.toggle('low',flashlight.charge<.15);
   updateObjective();
   const bm = $('m-breath');
@@ -735,8 +736,8 @@ function updateHUD() {
   const sm = $('m-stamina');
   sm.querySelector('i').style.width = `${player.stamina * 100}%`;
   sm.style.opacity = player.stamina < 0.99 ? 1 : 0.6;
-  $('stones').textContent = [player.stones ? `КАМНИ: ${player.stones}` : '', extras.held.length ? `БУДИЛЬНИКИ: ${extras.held.length}` : ''].filter(Boolean).join('   ');
-  $('stance').textContent = player.listening ? 'ВСЛУШИВАЕШЬСЯ' : player.holding ? 'НЕ ДЫШИШЬ' : player.hidden ? (player.hidden.low ? 'ПОД КРОВАТЬЮ' : 'В ШКАФЧИКЕ') : player.crouch ? 'КРАДЁШЬСЯ' : '';
+  localizedText($('stones'), [player.stones ? `КАМНИ: ${player.stones}` : '', extras.held.length ? `БУДИЛЬНИКИ: ${extras.held.length}` : ''].filter(Boolean).join('   '));
+  localizedText($('stance'), player.listening ? 'ВСЛУШИВАЕШЬСЯ' : player.holding ? 'НЕ ДЫШИШЬ' : player.hidden ? (player.hidden.low ? 'ПОД КРОВАТЬЮ' : 'В ШКАФЧИКЕ') : player.crouch ? 'КРАДЁШЬСЯ' : '');
 }
 
 // ------------------------------------------------------------------ interaction
@@ -1103,8 +1104,8 @@ function interact() {
 
 function openNote(i) {
   audio.paper();
-  $('note-title').textContent = NOTES[i].title;
-  $('note-body').textContent = NOTES[i].body;
+  localizedText($('note-title'), NOTES[i].title);
+  localizedText($('note-body'), NOTES[i].body);
   $('note').classList.remove('hidden');
   game.state = 'note';
   player.frozen = true;
@@ -1323,7 +1324,7 @@ function finishDeath(tip) {
   camera.fov = 80;
   camera.updateProjectionMatrix();
   fx.uniforms.uGlitch.value = fx.uniforms.uWhite.value = 0;
-  $('tip').textContent = tip;
+  localizedText($('tip'), tip);
   $('death').classList.remove('hidden');
   if (document.pointerLockElement) document.exitPointerLock();
   audio.setMaster(0.15, 0.3);
@@ -1436,7 +1437,7 @@ function resume() {
 }
 $('resume').addEventListener('click', resume);
 
-$('intro').innerHTML = INTRO.map((l) => `<p>${l}</p>`).join('');
+localizedHTML($('intro'), INTRO.map((l) => `<p>${l}</p>`).join(''));
 
 let booting = false;
 async function boot(fromSave) {
@@ -2078,9 +2079,9 @@ function tick(dt) {
     if (game.state === 'play' && player.fallT <= 0) {
       focus = chapter.active?chapter.focus(camera):findFocus();
       const prompt=chapter.active?chapter.prompt(focus):promptFor(focus);
-      $('prompt').textContent=prompt;
+      localizedText($('prompt'), prompt);
       $('crosshair').classList.toggle('focus',chapter.active?!!prompt:!!focus);
-    } else { $('prompt').textContent='';$('crosshair').classList.remove('focus'); }
+    } else { localizedText($('prompt'), '');$('crosshair').classList.remove('focus'); }
     updateHint(dt);
     if(!chapter.active)updateLocation(dt);
     updateHUD();
@@ -2121,8 +2122,8 @@ function updatePerformance(cpuStarted,drawn) {
   performanceStats.frames = 0; performanceStats.time = now;
   const target = gpuPipeline?.world || composer.readBuffer;
   const text = `${gpuPipeline ? 'WebGPU' : 'WebGL 2'} · ${Math.round(performanceStats.fps)} FPS\nGPU ${performanceStats.gpuMs ? performanceStats.gpuMs.toFixed(1) + ' ms' : '—'} · CPU ${performanceStats.cpuMs.toFixed(1)} ms\nМир ${target.width} × ${target.height} · ${Math.round(frameBudget.scale * 100)}%`;
-  $('render-stats').textContent = text;
-  $('render-status').textContent = text.replaceAll('\n', ' · ');
+  localizedText($('render-stats'), text);
+  localizedText($('render-status'), text.replaceAll('\n', ' · '));
 }
 function fallbackWebGL(error) {
   if (!gpuPipeline) return;
@@ -2184,7 +2185,7 @@ window.__game = {
 
 // Compact browser verification hooks; world coordinates: +X east, +Z south.
 window.render_game_to_text = () => JSON.stringify({
-  screen: front.screen, mode: game.state,
+  screen: front.screen, mode: game.state, language:getLanguage(),
   flashlight:{...flashlight.snapshot(),shaking:flashlight.shaking,power:flashlight.power},
   chapter: chapter.active?{id:2,...chapter.sequence.snapshot(),assets:caveLevel.assetStats,spider:chapter.spider.snapshot()}:{id:1},
   loading: { label: $('load-label').textContent, progress: +$('load-progress').getAttribute('aria-valuenow') },
@@ -2195,7 +2196,7 @@ window.render_game_to_text = () => JSON.stringify({
   playerMeters: document.body.classList.contains('show-player-meters'),
   touch: touchControls.enabled,
   rendering: { backend: gpuPipeline ? 'webgpu' : 'webgl', fps: +performanceStats.fps.toFixed(1), gpuMs: +performanceStats.gpuMs.toFixed(2), cpuMs: +performanceStats.cpuMs.toFixed(2), scale: +frameBudget.scale.toFixed(3), ratio: (gpuPipeline?.renderer || renderer).getPixelRatio(), width: (gpuPipeline?.world || composer.readBuffer).width, height: (gpuPipeline?.world || composer.readBuffer).height, visibleBatches: roomVisibility.stats.visible, totalBatches: roomVisibility.stats.total },
-  objective: { text: lastObjective, visible: $('objective').classList.contains('visible') },
+  objective: { text: t(lastObjective), visible: $('objective').classList.contains('visible') },
   audioReady: audio.ready, checkpoint: !!loadSave(),
   player: { x: +player.pos.x.toFixed(2), y: +player.pos.y.toFixed(2), z: +player.pos.z.toFixed(2), crouching: player.crouch, stones: player.stones, falling: player.fallT > 0 || !!player.pitFall, pitFall: !!player.pitFall, recovery: +player.fallT.toFixed(2), falls: player.falls },
   psychosis: +game.psychosis.toFixed(2),

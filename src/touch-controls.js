@@ -1,3 +1,4 @@
+import {html as localizedHTML,text as localizedText,sourceText,sourceHTML} from './i18n.js';
 // Pointer capture keeps each thumb independent: moving, looking and holding E
 // can overlap. Every exit path releases held keys, including interrupted touches.
 import {freshInput} from './input.js';
@@ -21,8 +22,8 @@ export function createTouchControls({player,game,look,pause,closeNote,throwItem,
     Digit4:'M3 13h3l3-7 5 14 3-9h4',
   };
   for(const button of root.querySelectorAll('button')){
-    const name=button.dataset.key||button.dataset.action,label=button.textContent;
-    if(symbols[name])button.innerHTML=`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${symbols[name]}"/></svg><span>${label}</span>`;
+    const name=button.dataset.key||button.dataset.action,label=sourceText(button);
+    if(symbols[name])localizedHTML(button, `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${symbols[name]}"/></svg><span>${label}</span>`);
   }
   const pointers=new Map(),held=new Map();
   const stick=root.querySelector('.touch-stick'),thumb=root.querySelector('.touch-thumb');
@@ -33,11 +34,11 @@ export function createTouchControls({player,game,look,pause,closeNote,throwItem,
     player.touchMove={x:0,y:0};thumb.style.transform='translate(0,0)';
     root.querySelectorAll('.pressed').forEach(o=>o.classList.remove('pressed'));
   };
-  const brief=document.getElementById('brief'),originalBrief=brief.innerHTML;
+  const brief=document.getElementById('brief'),originalBrief=sourceHTML(brief);
   const setEnabled=()=>{
     enabled=coarse.matches;document.body.classList.toggle('touch-device',enabled);release();
-    brief.innerHTML=enabled?'<h4>ДОЖДИСЬ ЛИФТА</h4><p><b>1</b> — переход, <b>2</b> — люк, <b>3</b> — дверь слева. Закрыт один вход.</p><p>Упрись в заслонку лицом. У люка — <b>ТИХО</b>. В передышках открывай: привод восстановится. <b>ДАТЧИК</b> тратит питание.</p>':originalBrief;
-    document.querySelector('#note .close').textContent=enabled?'Время идёт. Закрыть — кнопка справа сверху.':'[E] закрыть · время идёт';
+    localizedHTML(brief, enabled?'<h4>ДОЖДИСЬ ЛИФТА</h4><p><b>1</b> — переход, <b>2</b> — люк, <b>3</b> — дверь слева. Закрыт один вход.</p><p>Упрись в заслонку лицом. У люка — <b>ТИХО</b>. В передышках открывай: привод восстановится. <b>ДАТЧИК</b> тратит питание.</p>':originalBrief);
+    localizedText(document.querySelector('#note .close'), enabled?'Время идёт. Закрыть — кнопка справа сверху.':'[E] закрыть · время идёт');
   };
   coarse.addEventListener('change',setEnabled);setEnabled();
   const updateStick=(event)=>{
@@ -93,7 +94,7 @@ export function createTouchControls({player,game,look,pause,closeNote,throwItem,
       root.classList.toggle('hidden',!enabled||portrait||!['play','note'].includes(mode));
       root.classList.toggle('reading',mode==='note');
       root.querySelector('.touch-torch').classList.toggle('hidden',!flashlight.owned||mode!=='play');
-      root.querySelector('[data-key="KeyT"] span').textContent=`СВЕТ ${Math.round(flashlight.charge*100)}%`;
+      localizedText(root.querySelector('[data-key="KeyT"] span'), `СВЕТ ${Math.round(flashlight.charge*100)}%`);
       root.querySelector('[data-key="KeyT"]').classList.toggle('selected',flashlight.on);
       root.querySelector('.touch-siege').classList.toggle('hidden',!siege.active||mode!=='play');
       root.querySelector('[data-key="KeyC"]').classList.toggle('selected',player.crouch);

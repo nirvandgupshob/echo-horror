@@ -1,3 +1,4 @@
+import {t,onLanguageChange} from './i18n.js';
 import * as THREE from 'three';
 import { Level, W, H, ROOMS, FLOOR } from './level.js';
 import { Builder } from './builder.js';
@@ -76,6 +77,9 @@ export class CaveLevel extends Level {
     }
     for(const key of ['clay','silt','ochretile','sediment','shale'])this.mat[`floor_${key}`]=echoMaterial({...caveSurface(key),scale:.5,boost:.6});
     for(const key of Object.keys(DETAIL_SURFACES))this.mat[key]=echoMaterial(detailSurface(key));
+    this.mat.floorTransition=echoMaterial({pat:10,map:'geology/earth',scale:.5,map2:'details/linoleum',scale2:.7,split:.65,bump:.65,grime:.12});
+    this.mat.floorTransitionWet=echoMaterial({pat:10,map:'geology/mud',scale:.32,map2:'details/linoleum',scale2:.7,split:.65,bump:.65,grime:.12,wet:.4});
+    this.mat.roofTransition=echoMaterial({pat:10,map:'geology/cliff',scale:.32,map2:'oceil',scale2:.3,split:.45,bump:.65,grime:.12});
     this.mat.treatmentWall=echoMaterial({...detailSurface('peeled-ivory'),pat:7,map2:'details/blue-tile',scale2:1,split:1.65});
     this.mat.transitionWall=echoMaterial({...detailSurface('peeled-ivory'),pat:7,map2:'details/red-brick',scale2:1.2,split:1.2});
     this.mat.wardwall=echoMaterial({pat:7,map:'cave/limestone',scale:.45,map2:'cave/ceramic',scale2:.55,split:1.45,grime:.8});
@@ -179,7 +183,15 @@ export class CaveLevel extends Level {
       }
       this.items.push({id:`tone${i}`,type:'caveTone',index:i,pos:rotor.position.clone(),obj:rotor});
     }
-    this.items.push({id:'toneCode',type:'caveClue',pos:V(32.8,this.toneDials[0].position.y+.19,45.42)});
+    const codePos=V(32,this.toneDials[0].position.y+.24,45.43);
+    const label=document.createElement('canvas');label.width=768;label.height=160;
+    const texture=new THREE.CanvasTexture(label);texture.colorSpace=THREE.SRGBColorSpace;
+    const drawLabel=()=>{const ctx=label.getContext('2d');ctx.fillStyle='#b3b09c';ctx.fillRect(0,0,768,160);ctx.strokeStyle='#353b32';ctx.lineWidth=5;ctx.strokeRect(8,8,752,144);
+    ctx.fillStyle='#202b26';ctx.textAlign='center';ctx.font='bold 54px monospace';ctx.fillText('II  ·  0  ·  I',384,76);ctx.font='27px monospace';ctx.fillText(t('КАЛИБРОВКА · СЛЕВА НАПРАВО'),384,125);texture.needsUpdate=true;};
+    drawLabel();onLanguageChange(drawLabel);
+    const material=echoMaterial({pat:8,map:'decal:stain'});material.uniforms.uTex.value=texture;
+    const plate=new THREE.Mesh(new THREE.PlaneGeometry(.73,.152),material);plate.position.copy(codePos);this.scene.add(plate);
+    this.items.push({id:'toneCode',type:'caveClue',pos:codePos,obj:plate});
     this.stationItems=CAVE_STATIONS.map(s=>({...s,pos:s.id==='exit'?this.exitWheel.position.clone():s.id==='resonator'?this.resonatorDial.position.clone():s.id==='relay'?this.installedFuse.position.clone().setZ(47.91):V(s.x,1.18,26.35)}));
   }
   syncQuest(s){

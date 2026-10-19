@@ -1,6 +1,7 @@
+import {text as localizedText} from './i18n.js';
 import * as THREE from 'three';
 import {CaveSpider} from './cave-spider.js';
-import { CaveSequence } from './cave-sequence.js';
+import { CaveSequence, caveToneRate } from './cave-sequence.js';
 import { CAVE_SPAWN } from './cave-layout.js';
 import { echo, COLORS } from './echo.js';
 import { valveRotation,workProgress } from './work-motion.js';
@@ -12,11 +13,11 @@ const vmTake=(vm,pos)=>vm.act('take',pos,'fuse');
 export class CaveChapter {
   constructor({level,root,game,player,monster,audio,vm,save,complete,hide,take,flashlight}) {
     Object.assign(this,{level,root,game,player,monster,audio,vm,onSave:save,onComplete:complete,onHide:hide,onTake:take,flashlight});
-    this.active=false;this.loops=[];this.spider=new CaveSpider({level,root,game,audio});
+    this.active=false;this.loops=[];this.spider=new CaveSpider({level,root,game,audio,player});
   }
   start(saved=null,entry=null) {
     this.flashlight.restore(saved?.flashlight);this.level.flashlightItem.taken=this.flashlight.owned;this.level.flashlightItem.obj.visible=!this.flashlight.owned;
-    this.active=true;this.sequence=new CaveSequence(saved?.sequence);this.toneAction=null;this.workTarget=null;this.approach=null;this.spider.reset();if(this.sequence.tuned&&this.sequence.phase!=='complete')this.spider.activate(saved?.spider);
+    this.active=true;this.sequence=new CaveSequence(saved?.sequence);this.toneAction=null;this.workTarget=null;this.approach=null;this.spider.reset();
     const {player,level,game,monster,vm}=this;
     this.root.visible=true;level.mountOriginalLift();player.level=monster.level=level;
     monster.forcedTarget=null;monster.lures=[];monster.despawn();
@@ -30,6 +31,8 @@ export class CaveChapter {
     this.applyState();
     // Older checkpoints can predate the ward partitions and furniture layout.
     level.collidePlayer(player.pos,.3);
+    player.camera.position.set(player.pos.x,player.pos.y+player.eye,player.pos.z);
+    if(this.sequence.tuned&&this.sequence.phase!=='complete')this.spider.activate(saved?.spider);
     for(const l of this.loops)l.setGain(0,.01);
     if(this.audio.ready&&!this.motor){
       this.motor=this.audio.createLoop('loop_lift',V(8.5,1,6),.5,{ref:3,roll:.8});
@@ -91,8 +94,8 @@ export class CaveChapter {
     if(!this.flashlight.owned&&!s.drained)return 'Осмотреть больничный блок. Взять фонарь с полки у лифта.';
     if(!s.drained)return 'Снять давление в дренажном коллекторе. Иди на звук воды.';
     if(!s.tuned)return 'Включить резонатор в палате за Залом подвесов. Есть два обхода разлома.';
-    if(!s.relayPowered)return s.hasFuse?'Установить запасной ПН-2 в южный фидер нижнего резервуара.':'Найти запасной ПН-2 в геодезической камере. Паук боится луча фонаря [T].';
-    if(!s.tonesTuned)return 'Настроить три частоты в резонансной галерее: II · 0 · I. [V] — услышать сигнатуру.';
+    if(!s.relayPowered)return s.hasFuse?'Установить запасной ПН-2 в южный фидер нижнего резервуара.':'Найти запасной ПН-2 в северной геодезической камере. Не дай щелчкам выдать тебя.';
+    if(!s.tonesTuned)return 'Согласовать три частоты в резонансной галерее. [V] — услышать сигнатуру. Маркировка — на пульте.';
     return 'Оба фидера согласованы. Открыть затвор нижней штольни.';
   }
   prompt(it){
@@ -166,7 +169,7 @@ export class CaveChapter {
     }
     if(s.phase==='explore'){
       const room=level.roomAt(p.pos.x,p.pos.z)?.name||'Каменная перемычка';
-      if(room!==this.lastRoom){this.lastRoom=room;this.roomT=4;$('location').textContent=room;$('location').style.opacity=1;}
+      if(room!==this.lastRoom){this.lastRoom=room;this.roomT=4;localizedText($('location'), room);$('location').style.opacity=1;}
       this.roomT-=dt;if(this.roomT<=0)$('location').style.opacity=0;
       const valveTarget=s.drained?8:s.actionId==='valve'?valveRotation(s.action):0;
       level.valve.rotation.z=s.actionId==='valve'&&s.action>.3?valveTarget:THREE.MathUtils.damp(level.valve.rotation.z,valveTarget,10,dt);
@@ -197,11 +200,11 @@ export class CaveChapter {
         if(near)a.time+=dt;const k=Math.min(1,a.time/.65),next=(s.tones[a.it.index]+1)%3;
         rotor.rotation.z=THREE.MathUtils.lerp(a.from,next*.8,THREE.MathUtils.smoothstep(k,.3,.85));
         vm.work=near?{kind:'caveDial',target:a.it.pos.clone(),normal:V(0,0,1),k,time:k*3,angle:rotor.rotation.z,rotor}:null;
-        if(k>=1){s.turnTone(a.it.index);this.toneAction=null;vm.work=null;this.working=false;p.frozen=false;level.syncQuest(s);audio.play('tick',a.it.pos,{gain:.4,rate:1+next*.25,wet:.5});game.noise(a.it.pos,{radius:3,visual:3,source:'player',kind:'door',strength:.5});if(s.tonesTuned){game.hint('Фидеры согласованы. Теперь — затвор нижней штольни.',5,true);audio.ding(a.it.pos);}this.onSave();}
+        if(k>=1){s.turnTone(a.it.index);this.toneAction=null;vm.work=null;this.working=false;p.frozen=false;level.syncQuest(s);audio.play('tick',a.it.pos,{gain:.4,rate:caveToneRate(next),wet:.5});game.noise(a.it.pos,{radius:3,visual:3,source:'player',kind:'door',strength:.5});if(s.tonesTuned){game.hint('Фидеры согласованы. Теперь — затвор нижней штольни.',5,true);audio.ding(a.it.pos);}this.onSave();}
       }
       if(p.listening&&s.relayPowered&&!s.tonesTuned&&p.pos.distanceTo(V(32,0,45))<6){
-        this.toneCueT=(this.toneCueT||0)-dt;if(this.toneCueT<=0){this.toneCueT=.8;this.toneCue=(this.toneCue||0)%3;const index=[2,0,1][this.toneCue++];audio.play('tick',V(32,1.4,45),{gain:.5,rate:.75+index*.45,wet:.8});echo.emit(V(32,1.4,45),{radius:3,strength:.7,decay:1.2,color:COLORS.item});}
-      }
+        this.toneCueT=(this.toneCueT||0)-dt;if(this.toneCueT<=0){this.toneCue=(this.toneCue||0)%3;const index=[2,0,1][this.toneCue++];this.toneCueT=this.toneCue===3?2.1:.75;audio.play('tick',V(32,1.4,45),{gain:.5,rate:caveToneRate(index),wet:.8});echo.emit(V(32,1.4,45),{radius:3,strength:.7,decay:1.2,color:COLORS.item});}
+      }else{this.toneCue=0;this.toneCueT=.3;}
       const distance=Math.hypot(p.pos.x-8.5,p.pos.z-7);
       if(s.drained&&!this.spawned&&distance>12){
         this.spawned=true;
@@ -249,12 +252,12 @@ export class CaveChapter {
       audio.play('metal_heavy',V(13.5,.5,27),{gain:.8,rate:.6,wet:.9});
       game.hint('Вода уходит. Питание подано в палату 0.',4,true);this.onSave();
     }
-    if(event==='relay'){this.level.syncQuest(this.sequence);audio.play('click',V(13,1.15,47.9),{gain:.7,rate:.8,wet:.5});game.hint('Южный фидер запитан. В галерее — три регулятора: II · 0 · I.',6,true);this.onSave();}
+    if(event==='relay'){this.level.syncQuest(this.sequence);audio.play('click',V(13,1.15,47.9),{gain:.7,rate:.8,wet:.5});game.hint('Южный фидер запитан. Найди сигнатуру в галерее: вслушайся [V] или прочитай маркировку на пульте.',6,true);this.onSave();}
     if(event==='resonator'){
       this.spider.activate();
       audio.ding(V(49.5,2,17.5));
       echo.emit(V(49.5,1,17.5),{radius:18,speed:9,strength:1.1,decay:1.2,color:COLORS.machine});
-      game.hint('Сверху заскребло. Светом отгони паука. Запасной ПН-2 — в северной геодезической камере.',5,true);this.onSave();
+      game.hint('Оно отзывается на его щелчки. Держи луч на морде, пока не смолкнет.',6,true);this.onSave();
     }
     if(event==='exit'){
       level.gateDoor.closed=false;level.gateDoor.box=null;level.exitGate.position.y=4.2;

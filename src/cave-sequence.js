@@ -1,5 +1,7 @@
 import {workProgress} from './work-motion.js';
 
+export const caveToneRate=value=>.75+value*.45;
+
 // Game-time state only: pausing never consumes the descent or a held action.
 export class CaveSequence {
   constructor(saved = {}) {

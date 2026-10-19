@@ -81,10 +81,17 @@ fn acousticShade(w:vec3f,normal:vec3f,uv:vec2f,local:vec3f,localNormal:vec3f,col
   `:pat===8?`
   let dc=textureSampleGrad(T,S,uv,uvx,uvy);albedo=dc.rgb;alpha=dc.a;if(alpha<0.02){discard;}
   rough=select(0.85,mix(0.7,0.18,wet*smoothstep(0.3,0.9,alpha)),wet>0.0);
-  `:pat<4.5||(pat>6.5&&pat<7.5)?`
+  `:pat<4.5||(pat>6.5&&pat<7.5)||pat===10?`
   let nb=select(n,normalize(localNormal),localScale>0.5);var bw=pow(abs(nb),vec3f(4));bw/=bw.x+bw.y+bw.z;
   var tri:AcousticSample;
-  ${pat>6.5?`let wob=(acousticNoise(vec3f(w.x*3.0,0,w.z*3.0))-0.5)*0.015;
+  ${pat===10?`let ward=clamp(color.r,0.0,1.0);
+  if(ward<0.001){tri=acousticTri(T,Nm,H,S,scale,p,gx,gy,n,bw,V,distance(w,camera),pomDepth,bump);}
+  else if(ward>0.999){tri=acousticTri(T2,Nm2,H2,S,scale2,p,gx,gy,n,bw,V,distance(w,camera),pomDepth,bump);tri.albedo*=split;}
+  else{
+   let rock=acousticTri(T,Nm,H,S,scale,p,gx,gy,n,bw,V,distance(w,camera),pomDepth,bump);
+   let tile=acousticTri(T2,Nm2,H2,S,scale2,p,gx,gy,n,bw,V,distance(w,camera),pomDepth,bump);
+   tri=AcousticSample(mix(rock.albedo,tile.albedo*split,ward),normalize(mix(rock.normal,tile.normal,ward)),mix(rock.rough,tile.rough,ward));
+  }`:pat>6.5?`let wob=(acousticNoise(vec3f(w.x*3.0,0,w.z*3.0))-0.5)*0.015;
   if(w.y<split+wob){tri=acousticTri(T2,Nm2,H2,S,scale2,p,gx,gy,n,bw,V,distance(w,camera),pomDepth,bump);}
   else{tri=acousticTri(T,Nm,H,S,scale,p,gx,gy,n,bw,V,distance(w,camera),pomDepth,bump);}
   tri.albedo=mix(tri.albedo,tri.albedo*0.35,1.0-smoothstep(0.02,0.035,abs(w.y-split-wob)));`:`tri=acousticTri(T,Nm,H,S,scale,p,gx,gy,n,bw,V,distance(w,camera),pomDepth,bump);`}

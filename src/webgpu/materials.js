@@ -23,7 +23,7 @@ export function createAcousticMaterials() {
     }
     const data=new Float32Array(32),U=buffer(data,'vec4',8);
     const maps=['uTex','uNrm','uHgt','uTex2','uNrm2','uHgt2'].map(name=>texture(u[name].value||dummy));
-    const shade=functions.get(key)({w:positionWorld,normal:normalWorld,uv:flags.pat===8?uv():vec2(0),local:positionGeometry,localNormal:varying(normalLocal),color:flags.human?attribute('color','vec3'):vec3(1),camera:cameraPosition,U,P:pulses,Lamp,Sh,T:maps[0],Nm:maps[1],H:maps[2],T2:maps[3],Nm2:maps[4],H2:maps[5],S:maps[0]});
+    const shade=functions.get(key)({w:positionWorld,normal:normalWorld,uv:flags.pat===8?uv():vec2(0),local:positionGeometry,localNormal:varying(normalLocal),color:flags.human||flags.pat===10?attribute('color','vec3'):vec3(1),camera:cameraPosition,U,P:pulses,Lamp,Sh,T:maps[0],Nm:maps[1],H:maps[2],T2:maps[3],Nm2:maps[4],H2:maps[5],S:maps[0]});
     const m=new G.MeshBasicNodeMaterial();
     for(const name of ['name','side','transparent','depthTest','depthWrite','blending','blendSrc','blendDst','blendEquation','polygonOffset','polygonOffsetFactor','polygonOffsetUnits','visible'])m[name]=source[name];
     m.colorNode=shade.rgb;m.opacityNode=shade.a;m.uniforms=u;m.userData=source.userData;

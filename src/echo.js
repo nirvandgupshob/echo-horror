@@ -47,8 +47,17 @@ const VERT = /* glsl */ `
     #include <skinbase_vertex>
     #include <skinnormal_vertex>
     #include <skinning_vertex>
+    #ifdef USE_INSTANCING
+      mat3 instanceBasis=mat3(instanceMatrix);
+      objectNormal/=vec3(dot(instanceBasis[0],instanceBasis[0]),dot(instanceBasis[1],instanceBasis[1]),dot(instanceBasis[2],instanceBasis[2]));
+      objectNormal=instanceBasis*objectNormal;
+      transformed=(instanceMatrix*vec4(transformed,1.0)).xyz;
+    #endif
     vUv = uv;
     vO = position;
+    #ifdef USE_INSTANCING
+      vO = transformed;
+    #endif
     vNo = objectNormal;
     vec4 w = modelMatrix * vec4(transformed, 1.0);
     vW = w.xyz;
@@ -96,6 +105,7 @@ const FRAG = /* glsl */ `
     #define HUMAN_SKIN uHuman
     #define HAS_GRIME 1
     #define HAS_RELIEF 1
+    #define HAS_WARD_BLEND 0
   #endif
   uniform float uLit;
   uniform float uHuman;
@@ -222,13 +232,13 @@ const FRAG = /* glsl */ `
 
     #ifdef SURFACE
       float alpha = 1.0;
-      if (SURFACE_PATTERN > 8.5) {
+      if (SURFACE_PATTERN > 8.5 && SURFACE_PATTERN < 9.5) {
         vec2 rp=vec2(sin(vW.x*1.8+uTime*.7+vW.z*.3),sin(vW.z*2.1-uTime*.55+vW.x*.25));
         vec2 fine=vec2(sin(vW.x*12.0+uTime*1.2),sin(vW.z*10.0-uTime*.9));
         N=normalize(vec3((rp.x*.035+fine.x*.007),1.0,(rp.y*.035+fine.y*.007)));
         albedo=vec3(.028,.048,.046);rough=.19;
         alpha=.62+pow(1.0-max(dot(N,V),0.0),4.0)*.28;
-      } else if (SURFACE_PATTERN > 7.5) {
+      } else if (SURFACE_PATTERN > 7.5 && SURFACE_PATTERN < 8.5) {
         // decal: RGBA texture on a quad
         vec4 dc = texture2D(uTex, vUv);
         albedo = dc.rgb;
@@ -237,11 +247,22 @@ const FRAG = /* glsl */ `
         rough = uWet > 0.0 ? mix(0.7, 0.18, uWet * smoothstep(0.3, 0.9, alpha)) : 0.85;
         N = n;
       } else
-      if (SURFACE_PATTERN < 4.5 || (SURFACE_PATTERN > 6.5 && SURFACE_PATTERN < 7.5)) {
+      if (SURFACE_PATTERN < 4.5 || (SURFACE_PATTERN > 6.5 && SURFACE_PATTERN < 7.5) || SURFACE_PATTERN == 10.0) {
         // triplanar photo material (pat 7: two-tone wall, lower part uses map 2)
         vec3 nb = uLocal > 0.5 ? normalize(vNo) : n;
         vec3 bw = pow(abs(nb), vec3(4.0));
         bw /= (bw.x + bw.y + bw.z);
+        #if HAS_WARD_BLEND
+          float ward = clamp(vColor.r, 0.0, 1.0);
+          if(ward<0.001)albedo=tri(uTex,uNrm,uHgt,uScale,n,bw,N,rough);
+          else if(ward>0.999)albedo=tri(uTex2,uNrm2,uHgt2,uScale2,n,bw,N,rough)*uSplit;
+          else{
+            vec3 rockN=n, wardN=n; float rockR=0.8, wardR=0.8;
+            vec3 rock=tri(uTex,uNrm,uHgt,uScale,n,bw,rockN,rockR);
+            vec3 tile=tri(uTex2,uNrm2,uHgt2,uScale2,n,bw,wardN,wardR)*uSplit;
+            albedo=mix(rock,tile,ward);N=normalize(mix(rockN,wardN,ward));rough=mix(rockR,wardR,ward);
+          }
+        #else
         if (SURFACE_PATTERN > 6.5) {
           float wob = (vnoise(vec3(vW.x * 3.0, 0.0, vW.z * 3.0)) - 0.5) * 0.015;
           if (vW.y < uSplit + wob) albedo = tri(uTex2, uNrm2, uHgt2, uScale2, n, bw, N, rough);
@@ -250,6 +271,7 @@ const FRAG = /* glsl */ `
           float st = smoothstep(0.035, 0.02, abs(vW.y - uSplit - wob));
           albedo = mix(albedo, albedo * 0.35, st);
         } else albedo = tri(uTex, uNrm, uHgt, uScale, n, bw, N, rough);
+        #endif
         if (SURFACE_PATTERN > 0.5 && SURFACE_PATTERN < 1.5) {
           // standing water over the tiles: dark, mirror-like, rippling
           vec2 rp = vec2(sin(vW.x * 7.0 + uTime * 1.4 + sin(vW.z * 3.0)), sin(vW.z * 6.0 - uTime * 1.1 + sin(vW.x * 2.0)));
@@ -298,7 +320,9 @@ const FRAG = /* glsl */ `
     #endif
 
     #ifdef USE_COLOR
+    #if !HAS_WARD_BLEND
       albedo *= vColor.rgb;
+    #endif
     #endif
     vec3 acc = vec3(0.0);
     vec3 edge = vec3(0.0);
@@ -426,8 +450,8 @@ export function echoMaterial({ kind = 'surface', tint = 0xffffff, boost = 1, pat
   const m = new THREE.ShaderMaterial({
     vertexShader: VERT,
     fragmentShader: FRAG,
-    vertexColors: human,
-    defines: surface ? { SURFACE: 1, SURFACE_PATTERN: pat.toFixed(1), HUMAN_SKIN: human ? '1.0' : '0.0', HAS_GRIME: grime > 0 ? 1 : 0, HAS_RELIEF: relief > 0 ? 1 : 0 } : {},
+    vertexColors: human || pat === 10,
+    defines: surface ? { SURFACE: 1, SURFACE_PATTERN: pat.toFixed(1), HUMAN_SKIN: human ? '1.0' : '0.0', HAS_GRIME: grime > 0 ? 1 : 0, HAS_RELIEF: relief > 0 ? 1 : 0, HAS_WARD_BLEND: pat===10?1:0 } : {},
     uniforms: {
       uTime: shared.uTime,
       uP: shared.uP,

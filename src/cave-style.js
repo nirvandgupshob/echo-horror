@@ -27,6 +27,13 @@ export function hospitalShellWeight(x,z){
  const t=Math.max(0,Math.min(1,distance/.75));return 1-t*t*(3-2*t);
 }
 
+// A shared, continuous mask: never select a new floor texture per triangle.
+export function hospitalTextureWeight(x,z){
+ const w=hospitalWeight(x,z),t=Math.max(0,Math.min(1,(w-.15)/.82));
+ const blend=t*t*(3-2*t);
+ return Math.max(0,Math.min(1,blend+Math.sin(x*2.3+Math.sin(z*1.7))*blend*(1-blend)*.35));
+}
+
 export function caveSurface(key){
   const cloth=['gauze','canvas'].includes(key),metal=['copper','corroded','enamel','mesh','cable'].includes(key);
   return {

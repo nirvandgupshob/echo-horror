@@ -14,6 +14,19 @@ class GeometryCave extends CaveLevel{
 }
 const level=new GeometryCave(new THREE.Scene());
 
+test('the transition carries a continuous texture mask without overlapping floor layers',()=>{
+ const meshes=[];level.geology.group.traverse(o=>{if(o.isMesh&&o.geometry.attributes.color)meshes.push(o);});
+ assert.ok(meshes.length>0);
+ assert.ok(meshes.some(o=>Array.from(o.geometry.attributes.color.array).some(v=>v>.1&&v<.9)),'intermediate blend weights survive batching');
+ const ray=new THREE.Raycaster();level.scene.updateMatrixWorld(true);
+ for(let z=18.125;z<24;z+=.25){
+  const x=12.37;ray.set(new THREE.Vector3(x,1,z),new THREE.Vector3(0,-1,0));ray.far=4;
+  const hits=ray.intersectObjects(level.architecture,true).filter(h=>h.face.normal.y>.9);
+  assert.equal(hits.length,1,`single opaque floor at ${x},${z}`);
+  assert.ok(Math.abs(hits[0].point.y-level.floorHeightAt(x,z))<1e-5);
+ }
+});
+
 test('torch shelf has four floor-to-top uprights and a real resting surface',()=>{
   const b=new Builder();P.shelf(b.at(0,0,0),TORCH_RACK.width,TORCH_RACK.height,TORCH_RACK.depth,{fill:0});
   const boxes=Object.values(b.surfaces).flat().map(g=>{g.computeBoundingBox();return g.boundingBox;});
