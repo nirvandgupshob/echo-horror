@@ -1,7 +1,7 @@
 import {html as localizedHTML,text as localizedText,sourceText,sourceHTML} from './i18n.js';
 // Pointer capture keeps each thumb independent: moving, looking and holding E
 // can overlap. Every exit path releases held keys, including interrupted touches.
-import {freshInput} from './input.js';
+import {freshInput,HELD_KEYS} from './input.js';
 export function createTouchControls({player,game,look,pause,closeNote,throwItem,siege,mapPoint,flashlight}) {
   const root=document.getElementById('touch-controls');
   const rotate=document.getElementById('rotate-device');
@@ -50,13 +50,16 @@ export function createTouchControls({player,game,look,pause,closeNote,throwItem,
   };
   document.addEventListener('pointerdown',e=>{
     if(!enabled||!['play','note'].includes(game.state)||e.pointerType!=='touch')return;
-    if(!freshInput(e))return;
+    // A late touch still grabs the stick, the look area and pure held buttons;
+    // only one-shot actions are dropped.
+    const stale=!freshInput(e);
     const point=mapPoint(e),hit=document.elementFromPoint(point.x,point.y);
     const button=hit?.closest('#touch-controls button');
     const onStick=hit?.closest('.touch-stick');
     if(button){
-      e.preventDefault();e.stopImmediatePropagation();button.setPointerCapture(e.pointerId);pointers.set(e.pointerId,button);button.classList.add('pressed');
       const action=button.dataset.action,code=button.dataset.key;
+      if(stale&&!HELD_KEYS.has(code))return;
+      e.preventDefault();e.stopImmediatePropagation();button.setPointerCapture(e.pointerId);pointers.set(e.pointerId,button);button.classList.add('pressed');
       if(action==='pause')pause();else if(action==='close')closeNote();else if(action==='throw')throwItem();else if(code){held.set(e.pointerId,code);key(code,true);}
     }else if(onStick&&game.state==='play'&&stickId===null){
       e.preventDefault();e.stopImmediatePropagation();stickId=e.pointerId;stick.setPointerCapture(e.pointerId);updateStick(e);

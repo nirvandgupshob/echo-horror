@@ -57,6 +57,15 @@ export class CaveLevel extends Level {
   navigationHeadroom(x,z){return this.headroomAt(x,z);}
   blockedPoint(x,z,r){return pitField(x,z)<r||super.blockedPoint(x,z,r);}
   navLine(a,b,avoid=null){return !this.crossesPit(a,b)&&super.navLine(a,b,avoid);}
+  // The grid only changes with the door states, and those repeat (lift closed on
+  // arrival, open after the pry). Each one is built once: rebuilding it while
+  // playing stalled a frame for ~0.6 s right as the lift doors came open.
+  buildNav(){
+    if(!this.navReach)this.navCache=new Map();
+    const key=this.doors.map(d=>d.closed&&d.box?1:0).join(''),hit=this.navCache.get(key);
+    if(hit){this.nav=hit.nav;this.navDist=hit.navDist;return;}
+    super.buildNav();this.navCache.set(key,{nav:this.nav,navDist:this.navDist});
+  }
 
   isPit(x,z) {
     return pitField(x,z)<0;
@@ -205,7 +214,10 @@ export class CaveLevel extends Level {
     this.liftDoor={...this.originalLift,id:'caveLift',leaves:this.originalLift.leaves,closed:true,t:0,box:moveLiftCollider(this.originalLift.box)};
     this.doors.push(this.liftDoor);
     this.colliders.push(...hospital.liftColliders.map(moveLiftCollider));
-    this.buildCollision();this.navReach=null;this.buildNav();
+    this.buildCollision();this.navReach=null;
+    // Build the open-lift grid now, while loading, then keep the closed one active.
+    const {closed,box}=this.liftDoor;Object.assign(this.liftDoor,{closed:false,box:null});this.buildNav();
+    Object.assign(this.liftDoor,{closed,box});this.buildNav();
   }
   mountOriginalLift(){
     this.scene.add(this.liftRoot);
