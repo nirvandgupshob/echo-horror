@@ -35,6 +35,9 @@ import { freshInput } from './input.js';
 
 const $ = (id) => document.getElementById(id);
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
+// Ground distance to the creature. Both stand on the floor, which in chapter II
+// varies by up to ~3 m, so height must not count (the creature AI does the same).
+const monsterDistance = () => Math.hypot(monster.pos.x - player.pos.x, monster.pos.z - player.pos.z);
 
 // Install progress callbacks before constructing anything that requests textures.
 const failedTextures = [];
@@ -322,7 +325,7 @@ const game = {
     if (o.source && monster.active) monster.hear(pos, o.radius, o.source, o.kind, player.pos);
     // "it doesn't repeat. It answers": now and then your tap comes back from where it is
     if (o.source === 'player' && o.kind === 'click' && monster.active && !siege.active && monster.state !== 'chase') {
-      const md = monster.pos.distanceTo(V(player.pos.x, 0, player.pos.z));
+      const md = monsterDistance();
       if (md > 6 && md < 28 && Math.random() < 0.35) {
         later(0.4 + Math.random() * 0.35, () => {
           if (!monster.active) return;
@@ -521,8 +524,10 @@ renderer.domElement.addEventListener('webglcontextrestored', () => { backgroundD
 
 addEventListener('keydown', (e) => {
   if (e.code === 'Tab' && (game.state === 'play' || game.state === 'note')) e.preventDefault();
+  // The held state follows the physical key even for a late press; only the
+  // one-shot actions below are dropped when the press is stale.
+  if (game.state === 'play' && !e.repeat) player.keys.add(e.code);
   if (!freshInput(e)) return;
-  if (game.state === 'play') player.keys.add(e.code);
   if (game.state === 'play') {
     if (e.code === 'Escape') { pause(); return; }
     if (player.fallT > 0) return;
@@ -561,6 +566,7 @@ document.addEventListener('visibilitychange',()=>{if(document.hidden)clearInput(
 
 $('app').addEventListener('mousedown', (e) => {
   if (game.state !== 'play' && game.state !== 'note') return;
+  if (e.button === 2) player.keys.add('Mouse2'); // held, like the keys
   if (!freshInput(e)) return;
   if (player.fallT > 0) return;
   if (!pointerLocked) {
@@ -571,7 +577,6 @@ $('app').addEventListener('mousedown', (e) => {
     if (player.stones > 0 && !player.frozen) vm.throw();
     player.throwStone(scene);
   }
-  if (e.button === 2) player.keys.add('Mouse2');
 });
 addEventListener('mouseup', (e) => {
   if (e.button === 2) player.keys.delete('Mouse2');
@@ -1021,7 +1026,7 @@ function interact() {
       // it was waiting for that: it comes down the flooded passage
       later(3.2, () => {
         if (!monster.active || game.state !== 'play') return;
-        if (monster.pos.distanceTo(V(player.pos.x, 0, player.pos.z)) > 10) {
+        if (monsterDistance() > 10) {
           monster.spawn(V(43.2, 0, 27.5), 'wander');
           audio.crash(V(43, 2.5, 27.5));
         }
@@ -1594,7 +1599,7 @@ function updateDread(dt) {
   // without anything happening -> it drifts away, so the fear has a rhythm
   directorT -= dt;
   if (monster.active && !siege.active && game.state === 'play') {
-    const d = monster.pos.distanceTo(V(player.pos.x, 0, player.pos.z));
+    const d = monsterDistance();
     const idle = monster.state === 'wander' || monster.state === 'search';
     if (d < 10 && monster.state !== 'chase') closeT += dt;
     else closeT = Math.max(0, closeT - dt * 0.5);
@@ -1625,7 +1630,7 @@ function updateDread(dt) {
   stalkT -= dt;
   if (stalkT <= 0 && !siege.active) {
     stalkT = 70 + Math.random() * 60;
-    const far = !monster.active || monster.pos.distanceTo(V(player.pos.x, 0, player.pos.z)) > 20;
+    const far = !monster.active || monsterDistance() > 20;
     if (far) {
       const fx = Math.sin(player.yaw), fz = Math.cos(player.yaw);
       for (let i = 0; i < 4; i++)
@@ -1659,7 +1664,7 @@ function updateListen(dt) {
   let src = null, loud = 0;
   if (monster.active) {
     src = monster.pos;
-    const d = monster.pos.distanceTo(V(player.pos.x, 0, player.pos.z));
+    const d = monsterDistance();
     loud = Math.max(0, 1 - d / 30) * ((monster.curSpeed || 0) > 0.1 ? 1 : 0.45);
   }
   const mark = $('listen-mark');
@@ -1743,7 +1748,7 @@ let flash = 0;
 function updateFear(dt) {
   let target = 0;
   if (monster.active) {
-    const d = monster.pos.distanceTo(V(player.pos.x, 0, player.pos.z));
+    const d = monsterDistance();
     const st = monster.state;
     const k = st === 'chase' ? 1.5 : st === 'hunt' ? 1 : st === 'windup' || st === 'lunge' ? 1.4 : st === 'sniff' ? 1.2 : 0.75;
     target = Math.max(0, 1 - d / 15) * k;
