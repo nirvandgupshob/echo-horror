@@ -86,6 +86,19 @@ export class CaveChapter {
     }
     if(it?.type==='flashlight'){this.onTake(it);this.flashlight.acquire();this.game.hint('Динамо-фонарь. [T] — свет. Удерживай [R] — трясти и заряжать. Шум слышно.',7,true);this.onSave();}
   }
+  // Where the player has to go next: the director lays its ambushes on the way.
+  goal(){
+    const s=this.sequence,l=this.level,at=it=>V(it.pos.x,0,it.pos.z),station=id=>at(l.stationItems.find(it=>it.id===id));
+    if(s.phase!=='explore')return null;
+    if(!this.flashlight.owned&&!s.drained)return at(l.flashlightItem);
+    if(!s.drained)return station('valve');
+    if(!s.tuned)return station('resonator');
+    if(!s.relayPowered)return s.hasFuse?station('relay'):at(l.relayFuseItem);
+    if(!s.tonesTuned)return V(l.toneDials[1].position.x,0,l.toneDials[1].position.z);
+    return station('exit');
+  }
+  // 0..4: every restored system makes more noise down here, and it knows the way.
+  pressure(){const s=this.sequence;return [s.drained,s.tuned,s.relayPowered,s.tonesTuned].filter(Boolean).length;}
   objective(){
     const s=this.sequence;
     if(s.phase==='descent')return 'Дождаться остановки лифта.';

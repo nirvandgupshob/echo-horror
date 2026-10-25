@@ -142,6 +142,13 @@ export class CaveLevel extends Level {
     B.box(8.5,-.05,8.69,3,.1,.62,{key:'f_dplate',collide:false,walk:true});
     buildCaveGeology(this);
     for(let z=20;z<34;z++)for(let x=6;x<20;x++)if(this.open(x,z)&&this.zones[z*W+x]===2&&hash(x,z)>.9)this.drips.push({pos:V(x+.5,.03,z+.5),t:hash(x,z)*4,int:3});
+    // Sparse seepage over the open rock. Besides the life it gives the caverns, it
+    // is a tell: water falls silent around the creature where it lies in wait.
+    for(let z=1;z<55;z++)for(let x=1;x<63;x++){
+      const px=x+.5,pz=z+.5;
+      if(hospitalWeight(px,pz)>.97||caveField(px,pz)<.3||pitField(px,pz)<1.2||hash(x,z,3)<.975)continue;
+      this.drips.push({pos:V(px,groundHeight(px,pz)+.03,pz),t:hash(x,z,4)*6,int:6+hash(x,z,5)*4,seep:true});
+    }
     buildWardPartitions(B);
     // A bulkhead actually closes the tunnel around the moving exit gate.
     let left=49,right=52;
