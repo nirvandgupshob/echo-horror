@@ -32,6 +32,7 @@ import { FrameBudget } from './frame-budget.js';
 import { createWebGLTimer } from './gpu-timer.js';
 import { createGLFrameQueue } from './frame-queue.js';
 import { freshInput } from './input.js';
+import { hushed } from './hush.js';
 
 const $ = (id) => document.getElementById(id);
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
@@ -406,7 +407,7 @@ function startCave(saved=null,entry=null){
   monster.despawn();
   for(const loop of [waterLoop,generator,lift,drone])if(loop)loop.setGain(0,.1);
   roomVisibility=caveVisibility;echo.clear();chapter.start(saved,entry);
-  psyMem=psyFlare=smear=glitchT=0;
+  psyMem=psyFlare=smear=glitchT=0;resetDirector();
   localizedText($('location'), '');$('location').style.opacity=0;
   $('hud').classList.remove('hidden');$('slits').classList.add('hidden');
 }
@@ -684,6 +685,7 @@ function objective() {
 
 // where the player is heading next (the creature uses it to lie in wait)
 function objectivePos() {
+  if (chapter.active) return chapter.goal();
   const f = game.flags;
   if (f.called) return null;
   if (f.powered) return V(9.5, 0, 6);
@@ -1540,9 +1542,17 @@ let sightCd = 0, sightT = 0, glitchT = 0;
 let stalkT = 75;
 let directorT = 45;
 let closeT = 0;
+let finaleAmbush = false, finaleTryT = 0; // chapter II: one ambush on the last stretch, always
+function resetDirector() {
+  sightCd = sightT = closeT = finaleTryT = 0;
+  directorT = 30;
+  stalkT = 60;
+  finaleAmbush = false;
+}
 // a narrow spot 9-18 m ahead on the way to the next goal, reachable for the
 // creature without walking past the player
 function planAmbush(goal) {
+  const level = player.level;
   const path = level.findPath(player.pos, goal);
   if (!path || path.length < 2) return false;
   let acc = 0, spot = null, fallback = null;
@@ -1584,7 +1594,7 @@ function updateDread(dt) {
       const dir = new THREE.Vector3();
       camera.getWorldDirection(dir);
       const to = hp.clone().sub(camera.position).normalize();
-      if (dir.dot(to) > 0.8 && level.occlusion(camera.position, hp) < 0.35) {
+      if (dir.dot(to) > 0.8 && player.level.occlusion(camera.position, hp) < 0.35) {
         sightCd = 25;
         glitchT = 0.4;
         audio.stinger('high', 0.75);
@@ -1599,27 +1609,40 @@ function updateDread(dt) {
   // without anything happening -> it drifts away, so the fear has a rhythm
   directorT -= dt;
   if (monster.active && !siege.active && game.state === 'play') {
+    const world = player.level;
+    // chapter II tightens as the systems come back: shorter lulls, more ambushes
+    const pressure = chapter.active ? chapter.pressure() : 0;
     const d = monsterDistance();
     const idle = monster.state === 'wander' || monster.state === 'search';
     if (d < 10 && monster.state !== 'chase') closeT += dt;
     else closeT = Math.max(0, closeT - dt * 0.5);
     if (closeT > 55 && idle) {
       closeT = 0;
-      const far = level.randomWalkable(monster.pos, 26, 16);
+      const far = world.randomWalkable(monster.pos, 26, 16);
       if (far) monster.goTo(far, 'wander');
       directorT = 25;
     }
+    // the last stretch to the lower adit: it goes ahead and waits, once
+    finaleTryT -= dt;
+    if (chapter.active && chapter.sequence.tonesTuned && !finaleAmbush && idle && d > 12 && finaleTryT <= 0) {
+      finaleTryT = 2; // path searches: not every frame while no spot works
+      const goal = objectivePos();
+      if (goal && planAmbush(goal)) {
+        finaleAmbush = true;
+        directorT = 40;
+      }
+    }
     if (directorT <= 0) {
-      directorT = 20 + Math.random() * 15;
+      directorT = 20 + Math.random() * 15 - pressure * 3;
       if (idle && d > 15) {
         const r = Math.random();
         const goal = objectivePos();
         let ambushed = false;
-        if (r < 0.32 && goal) ambushed = planAmbush(goal);
+        if (r < 0.32 + pressure * 0.08 && goal) ambushed = planAmbush(goal);
         if (!ambushed) {
           if (r < 0.75) monster.stalk(32 + Math.random() * 18);
           else {
-            const t = level.randomWalkable(player.pos, 8, 3);
+            const t = world.randomWalkable(player.pos, 8, 3);
             if (t) monster.goTo(t, 'investigate');
           }
         }
@@ -1635,7 +1658,7 @@ function updateDread(dt) {
       const fx = Math.sin(player.yaw), fz = Math.cos(player.yaw);
       for (let i = 0; i < 4; i++)
         later(i * 0.75, () => {
-          const p = V(player.pos.x + fx * (7 - i * 0.6), 0.2, player.pos.z + fz * (7 - i * 0.6));
+          const p = V(player.pos.x + fx * (7 - i * 0.6), player.pos.y + 0.2, player.pos.z + fz * (7 - i * 0.6));
           audio.play('flesh', p, { gain: 0.35, rate: 0.66, wet: 0.7, vary: 0.05 });
           audio.play('tick', p, { gain: 0.12, rate: 1.7, wet: 0.5, delay: 0.04 });
         });
@@ -1692,9 +1715,17 @@ function updateAmbient(dt, world=level) {
     if (d.t <= 0) {
       d.t = d.int * (0.7 + Math.random() * 0.6);
       const dist = d.pos.distanceTo(cp);
+      if (hushed(d, monster)) {
+        if (dist < 16 && !game.flags.hushHint) {
+          game.flags.hushHint = true;
+          game.hint('Капель впереди смолкла. Вода так не замолкает.', 5);
+        }
+        continue;
+      }
       if (dist < 22) {
         audio.drip(d.pos);
-        echo.emit(V(d.pos.x, 0.02, d.pos.z), { radius: 2.4, speed: 3.5, strength: 0.55, decay: 1.4, color: COLORS.drip });
+        // seepage far off is heard, not seen: keeps the echo budget for what matters
+        if (!d.seep || dist < 12) echo.emit(V(d.pos.x, (world.floorHeightAt?.(d.pos.x, d.pos.z) ?? 0) + 0.02, d.pos.z), { radius: 2.4, speed: 3.5, strength: 0.55, decay: 1.4, color: COLORS.drip });
       }
     }
   }
@@ -2068,7 +2099,7 @@ function tick(dt) {
     player.level.updateDoors(dt);
     updateAmbient(dt,player.level);
     updateFear(dt);
-    if(!chapter.active)updateDread(dt);
+    updateDread(dt);
     updateListen(dt);
     updateTimers(dt);
     touchCd -= dt;
